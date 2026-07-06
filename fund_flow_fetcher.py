@@ -465,10 +465,16 @@ def _fetch_sector_rank_eastmoney(
 ) -> pd.DataFrame:
     fs = "m:90+t:3" if sector_type == "concept" else "m:90+t:2"
     url = "https://push2.eastmoney.com/api/qt/clist/get"
+
+    # 行业板块需多拉一些（因子类别父类会被过滤掉）
+    fetch_n = top_n * 3 if sector_type == "industry" else top_n
+    # 行业板块额外请求 f104（成分股数量），用于识别父类
+    extra_fields = "f104," if sector_type == "industry" else ""
+
     params = {
-        "pn": 1, "pz": top_n, "po": 1, "np": 1,
+        "pn": 1, "pz": fetch_n, "po": 1, "np": 1,
         "fltt": 2, "invt": 2, "fs": fs, "stat": 1,
-        "fields": "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87",
+        "fields": f"{extra_fields}f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87",
         "fid": "f62",
         "_": int(datetime.now().timestamp() * 1000),
     }
@@ -485,6 +491,18 @@ def _fetch_sector_rank_eastmoney(
     for col in ["主力净流入", "超大单净流入", "大单净流入", "中单净流入", "小单净流入"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
+
+    # 行业板块：过滤父类（成分股 > 200 的为父类，如"医药生物"320只）
+    if sector_type == "industry" and "f104" in df.columns:
+        df["f104"] = pd.to_numeric(df["f104"], errors="coerce").fillna(0)
+        before = len(df)
+        df = df[df["f104"] <= 200]
+        df = df.drop(columns=["f104"])
+        after = len(df)
+        if before > after:
+            pass  # 父类已被静默过滤
+
+    df = df.head(top_n)
     df["更新时间"] = datetime.now().strftime("%H:%M:%S")
     df["数据源"] = "东财"
     return df
