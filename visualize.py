@@ -82,9 +82,12 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
         horizontal_spacing=0.04,
     )
 
-    # 左：多板块折线叠加
-    palette = ["#e74c3c", "#f39c12", "#f1c40f", "#2ecc71",
-               "#1abc9c", "#3498db", "#9b59b6", "#e67e22", "#34495e"]
+    # 左：多板块折线叠加（高区分度 12 色调色板）
+    palette = [
+        "#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6",
+        "#1ABC9C", "#E67E22", "#2980B9", "#C0392B", "#27AE60",
+        "#8E44AD", "#D35400",
+    ]
     for i, (name, df) in enumerate(hist_data.items()):
         final = df["主力净流入"].iloc[-1]
         label = f"{name}  {final:+.2f}亿"
@@ -92,9 +95,10 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
             go.Scatter(
                 x=df["时间"],
                 y=df["主力净流入"],
-                mode="lines",
+                mode="lines+markers",
                 name=label,
-                line=dict(color=palette[i % len(palette)], width=2.2),
+                line=dict(color=palette[i % len(palette)], width=2.5),
+                marker=dict(size=3, color=palette[i % len(palette)]),
                 hovertemplate="%{x}<br>净流入: %{y:.2f}亿<extra></extra>",
             ),
             row=1, col=1,
