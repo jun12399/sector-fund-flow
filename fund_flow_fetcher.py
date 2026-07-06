@@ -10,6 +10,8 @@ A 股板块资金流向数据抓取（增强版 v2.1）
 """
 
 import json
+import os
+import glob
 import socket
 import ssl
 import time
@@ -260,9 +262,14 @@ _default_fetcher = SmartFetcher(verbose=False)
 _last_error: str = ""  # 供 UI 展示用
 
 # ═══════════════════════════════════════════════════════════════
-# 后台采集线程：持续记录排行榜快照，与页面打开与否无关
+# 持久化存储：数据自动存盘，保留30天，超期自动清空
 # ═══════════════════════════════════════════════════════════════
-_ts_accumulator: dict[str, list[tuple[str, float]]] = {}  # {板块名: [(HH:MM, 净流入), ...]}
+_SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "snapshots")
+_RETENTION_DAYS = 30
+
+# 内存累加器：{sector_type:name → [(HH:MM, 净流入), ...]}
+# sector_type: "c" = 概念, "i" = 行业
+_ts_accumulator: dict[str, list[tuple[str, float]]] = {}
 _ts_lock = threading.Lock()
 _ts_last_snapshot: Optional[datetime] = None
 _collector_running = False
@@ -270,13 +277,76 @@ _collector_thread: Optional[threading.Thread] = None
 _last_error: str = ""
 
 
+def _make_key(sector_type: str, name: str) -> str:
+    prefix = "c" if sector_type == "concept" else "i"
+    return f"{prefix}:{name}"
+
+
+def _load_history():
+    """启动时加载最近 30 天的历史快照到内存"""
+    global _ts_accumulator
+    loaded = 0
+    cutoff = datetime.now() - timedelta(days=_RETENTION_DAYS)
+    os.makedirs(_SNAPSHOT_DIR, exist_ok=True)
+
+    files = sorted(glob.glob(os.path.join(_SNAPSHOT_DIR, "*.jsonl")))
+    for fp in files:
+        # 从文件名提取日期
+        basename = os.path.basename(fp)
+        try:
+            file_date = datetime.strptime(basename[:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        if file_date < cutoff:
+            continue  # 跳过往期但仍保留（清理在 _cleanup 做）
+
+        with open(fp, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    key = _make_key(rec["s"], rec["n"])
+                    if key not in _ts_accumulator:
+                        _ts_accumulator[key] = []
+                    _ts_accumulator[key].append((rec["t"], rec["v"]))
+                    loaded += 1
+                except (json.JSONDecodeError, KeyError):
+                    continue
+    if loaded:
+        print(f"[数据] 已加载 {loaded} 条历史快照（最近 {_RETENTION_DAYS} 天）")
+
+
+def _cleanup_old_files():
+    """删除超过保留期的快照文件"""
+    cutoff = datetime.now() - timedelta(days=_RETENTION_DAYS)
+    files = glob.glob(os.path.join(_SNAPSHOT_DIR, "*.jsonl"))
+    deleted = 0
+    for fp in files:
+        basename = os.path.basename(fp)
+        try:
+            file_date = datetime.strptime(basename[:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        if file_date < cutoff:
+            try:
+                os.remove(fp)
+                deleted += 1
+            except OSError:
+                pass
+    if deleted:
+        print(f"[数据] 已清理 {deleted} 个过期快照文件（>{_RETENTION_DAYS}天）")
+
+
 class BackgroundCollector:
-    """后台线程：定时采集概念+行业双板块排行榜快照"""
+    """后台线程：定时采集概念+行业双板块排行榜快照，自动存盘"""
 
     def __init__(self, interval_sec: int = 180, top_n: int = 30):
         self.interval_sec = interval_sec
         self.top_n = top_n
         self._stop_event = threading.Event()
+        self._fetcher: Optional[SmartFetcher] = None
 
     def start(self):
         global _collector_running, _collector_thread
@@ -293,52 +363,68 @@ class BackgroundCollector:
 
     def _run(self):
         global _last_error
-        fetcher = SmartFetcher(verbose=False, min_interval=0.5, max_interval=1.5)
+        self._fetcher = SmartFetcher(verbose=False, min_interval=0.5, max_interval=1.5)
         while not self._stop_event.is_set():
             try:
                 if not _is_trading_time():
-                    # 非交易时段每 5 分钟检查一次
                     self._stop_event.wait(300)
                     continue
 
-                # 同时采集概念 + 行业
                 for stype in ("concept", "industry"):
-                    df = _fetch_sector_rank_eastmoney(fetcher, sector_type=stype, top_n=self.top_n)
+                    df = _fetch_sector_rank_eastmoney(self._fetcher, sector_type=stype, top_n=self.top_n)
                     if df.empty:
                         continue
                     with _ts_lock:
-                        self._record(df)
-                    # 两个请求之间休息一下
+                        self._record(df, stype)
                     time.sleep(random.uniform(1.0, 2.0))
 
                 _last_error = ""
+
+                # 每天第一次采集时清理过期文件
+                if datetime.now().hour == 9 and datetime.now().minute < 40:
+                    _cleanup_old_files()
+
             except Exception as e:
                 _last_error = f"后台采集异常: {e}"
 
-            # 等待下一轮
             self._stop_event.wait(self.interval_sec)
 
     @staticmethod
-    def _record(df_rank: pd.DataFrame):
+    def _record(df_rank: pd.DataFrame, sector_type: str):
         global _ts_accumulator, _ts_last_snapshot
-        now_str = datetime.now().strftime("%H:%M")
-        _ts_last_snapshot = datetime.now()
-        for _, row in df_rank.iterrows():
-            name = row["板块名称"]
-            if pd.isna(name):
-                continue
-            inflow = float(row["主力净流入"]) if not pd.isna(row.get("主力净流入")) else 0.0
-            if name not in _ts_accumulator:
-                _ts_accumulator[name] = []
-            # 跳过同一分钟的重复记录
-            if _ts_accumulator[name] and _ts_accumulator[name][-1][0] == now_str:
-                continue
-            _ts_accumulator[name].append((now_str, inflow))
+        now = datetime.now()
+        now_str = now.strftime("%H:%M")
+        today_str = now.strftime("%Y-%m-%d")
+        _ts_last_snapshot = now
+
+        os.makedirs(_SNAPSHOT_DIR, exist_ok=True)
+        fp = os.path.join(_SNAPSHOT_DIR, f"{today_str}.jsonl")
+
+        with open(fp, "a", encoding="utf-8") as f:
+            for _, row in df_rank.iterrows():
+                name = row["板块名称"]
+                if pd.isna(name):
+                    continue
+                inflow = float(row["主力净流入"]) if not pd.isna(row.get("主力净流入")) else 0.0
+                key = _make_key(sector_type, name)
+
+                if key not in _ts_accumulator:
+                    _ts_accumulator[key] = []
+                if _ts_accumulator[key] and _ts_accumulator[key][-1][0] == now_str:
+                    continue
+
+                _ts_accumulator[key].append((now_str, inflow))
+
+                # 追加写入 JSONL
+                rec = {"t": now_str, "n": name, "v": inflow, "s": "c" if sector_type == "concept" else "i"}
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-# ── 启动/停止 ──
+# ── 启动 / 停止 ──
 def start_collector(interval_sec: int = 180):
-    """启动后台数据采集线程"""
+    """启动后台数据采集线程（含历史加载 + 过期清理）"""
+    _load_history()
+    _cleanup_old_files()
     c = BackgroundCollector(interval_sec=interval_sec)
     c.start()
 
@@ -349,20 +435,20 @@ def stop_collector():
     _collector_running = False
 
 
-def get_intraday_series(sector_name: str) -> pd.DataFrame:
+def get_intraday_series(sector_name: str, sector_type: str = "concept") -> pd.DataFrame:
     """返回板块的累计时间序列 DataFrame[时间, 主力净流入]"""
+    key = _make_key(sector_type, sector_name)
     with _ts_lock:
-        points = list(_ts_accumulator.get(sector_name, []))
+        points = list(_ts_accumulator.get(key, []))
     if not points:
         return pd.DataFrame()
     return pd.DataFrame(points, columns=["时间", "主力净流入"])
 
 
 def get_snapshot_count() -> int:
-    """返回已记录的快照轮数（用于调试）"""
-    return len(_ts_accumulator) and max(
-        (len(v) for v in _ts_accumulator.values()), default=0
-    ) or 0
+    """返回已记录的快照轮数"""
+    vals = list(_ts_accumulator.values())
+    return max((len(v) for v in vals), default=0)
 
 
 def get_last_error() -> str:

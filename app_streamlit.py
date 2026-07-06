@@ -57,7 +57,7 @@ def render_once():
             failed = 0
             for _, row in df_rank.head(top_line_n).iterrows():
                 name = row["板块名称"]
-                df = get_intraday_series(name)
+                df = get_intraday_series(name, sector_type)
                 if df.empty:
                     df = fetch_sector_intraday(row["板块代码"])
                 if not df.empty:
