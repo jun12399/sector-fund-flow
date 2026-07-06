@@ -13,7 +13,10 @@ import time
 from datetime import datetime
 import streamlit as st
 
-from fund_flow_fetcher import fetch_sector_rank, fetch_sector_intraday, is_trading_time, get_last_error
+from fund_flow_fetcher import (
+    fetch_sector_rank, fetch_sector_intraday, is_trading_time,
+    get_last_error, record_snapshot, get_intraday_series,
+)
 from visualize import build_dashboard, build_mock_data
 
 
@@ -49,17 +52,24 @@ def render_once():
                 st.error(f"❌ 数据获取失败：{err}")
                 st.info("💡 请切换到 mock 模式查看演示数据，或等待 1-2 分钟后刷新")
                 return
+            # 记录快照到时间序列累加器（替代不可用的 push2his 分钟K线API）
+            record_snapshot(df_rank)
+
+            # 从累加器读取走势数据（优先），空则尝试实时API兜底
             hist_data = {}
             failed = 0
             for _, row in df_rank.head(top_line_n).iterrows():
-                df = fetch_sector_intraday(row["板块代码"])
+                name = row["板块名称"]
+                df = get_intraday_series(name)
+                if df.empty:
+                    df = fetch_sector_intraday(row["板块代码"])
                 if not df.empty:
-                    hist_data[row["板块名称"]] = df[["时间", "主力净流入"]]
+                    hist_data[name] = df[["时间", "主力净流入"]]
                 else:
                     failed += 1
             ts = f"{datetime.now():%Y-%m-%d %H:%M:%S}"
             if failed > 0:
-                st.warning(f"⚠️ {failed}/{top_line_n} 个板块分钟数据获取失败（盘初数据量少属正常）")
+                st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（等待下一次刷新积累数据点）")
 
         fig = build_dashboard(hist_data, df_rank, ts)
         st.plotly_chart(fig, use_container_width=True)

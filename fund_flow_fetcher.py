@@ -258,6 +258,35 @@ class SmartFetcher:
 _default_fetcher = SmartFetcher(verbose=False)
 _last_error: str = ""  # 供 UI 展示用
 
+# ── 时间序列累加器（替代不可用的 push2his 分钟 K 线 API）──
+# 通过轮询排行榜 API 积累分钟级数据点，天然形成走势图
+_ts_accumulator: dict[str, list[tuple[str, float]]] = {}  # {板块名: [(HH:MM, 净流入), ...]}
+_ts_last_snapshot: Optional[datetime] = None
+
+
+def record_snapshot(df_rank: pd.DataFrame):
+    """从排行榜 DataFrame 记录当前时刻的资金流向快照（供走势图用）"""
+    global _ts_accumulator, _ts_last_snapshot
+    now_str = datetime.now().strftime("%H:%M")
+    _ts_last_snapshot = datetime.now()
+    for _, row in df_rank.iterrows():
+        name = row["板块名称"]
+        inflow = row["主力净流入"]
+        if name not in _ts_accumulator:
+            _ts_accumulator[name] = []
+        # 跳过同一分钟的重复记录
+        if _ts_accumulator[name] and _ts_accumulator[name][-1][0] == now_str:
+            continue
+        _ts_accumulator[name].append((now_str, inflow))
+
+
+def get_intraday_series(sector_name: str) -> pd.DataFrame:
+    """返回板块的累计时间序列 DataFrame[时间, 主力净流入]"""
+    points = _ts_accumulator.get(sector_name, [])
+    if not points:
+        return pd.DataFrame()
+    return pd.DataFrame(points, columns=["时间", "主力净流入"])
+
 
 def get_last_error() -> str:
     return _last_error
