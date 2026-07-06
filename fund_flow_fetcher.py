@@ -14,6 +14,7 @@ import socket
 import ssl
 import time
 import random
+import threading
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
 from typing import Optional, Literal
@@ -258,34 +259,110 @@ class SmartFetcher:
 _default_fetcher = SmartFetcher(verbose=False)
 _last_error: str = ""  # 供 UI 展示用
 
-# ── 时间序列累加器（替代不可用的 push2his 分钟 K 线 API）──
-# 通过轮询排行榜 API 积累分钟级数据点，天然形成走势图
+# ═══════════════════════════════════════════════════════════════
+# 后台采集线程：持续记录排行榜快照，与页面打开与否无关
+# ═══════════════════════════════════════════════════════════════
 _ts_accumulator: dict[str, list[tuple[str, float]]] = {}  # {板块名: [(HH:MM, 净流入), ...]}
+_ts_lock = threading.Lock()
 _ts_last_snapshot: Optional[datetime] = None
+_collector_running = False
+_collector_thread: Optional[threading.Thread] = None
+_last_error: str = ""
 
 
-def record_snapshot(df_rank: pd.DataFrame):
-    """从排行榜 DataFrame 记录当前时刻的资金流向快照（供走势图用）"""
-    global _ts_accumulator, _ts_last_snapshot
-    now_str = datetime.now().strftime("%H:%M")
-    _ts_last_snapshot = datetime.now()
-    for _, row in df_rank.iterrows():
-        name = row["板块名称"]
-        inflow = row["主力净流入"]
-        if name not in _ts_accumulator:
-            _ts_accumulator[name] = []
-        # 跳过同一分钟的重复记录
-        if _ts_accumulator[name] and _ts_accumulator[name][-1][0] == now_str:
-            continue
-        _ts_accumulator[name].append((now_str, inflow))
+class BackgroundCollector:
+    """后台线程：定时采集概念+行业双板块排行榜快照"""
+
+    def __init__(self, interval_sec: int = 180, top_n: int = 30):
+        self.interval_sec = interval_sec
+        self.top_n = top_n
+        self._stop_event = threading.Event()
+
+    def start(self):
+        global _collector_running, _collector_thread
+        if _collector_running:
+            return
+        _collector_running = True
+        _collector_thread = threading.Thread(target=self._run, daemon=True, name="fund-collector")
+        _collector_thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        global _collector_running
+        _collector_running = False
+
+    def _run(self):
+        global _last_error
+        fetcher = SmartFetcher(verbose=False, min_interval=0.5, max_interval=1.5)
+        while not self._stop_event.is_set():
+            try:
+                if not _is_trading_time():
+                    # 非交易时段每 5 分钟检查一次
+                    self._stop_event.wait(300)
+                    continue
+
+                # 同时采集概念 + 行业
+                for stype in ("concept", "industry"):
+                    df = _fetch_sector_rank_eastmoney(fetcher, sector_type=stype, top_n=self.top_n)
+                    if df.empty:
+                        continue
+                    with _ts_lock:
+                        self._record(df)
+                    # 两个请求之间休息一下
+                    time.sleep(random.uniform(1.0, 2.0))
+
+                _last_error = ""
+            except Exception as e:
+                _last_error = f"后台采集异常: {e}"
+
+            # 等待下一轮
+            self._stop_event.wait(self.interval_sec)
+
+    @staticmethod
+    def _record(df_rank: pd.DataFrame):
+        global _ts_accumulator, _ts_last_snapshot
+        now_str = datetime.now().strftime("%H:%M")
+        _ts_last_snapshot = datetime.now()
+        for _, row in df_rank.iterrows():
+            name = row["板块名称"]
+            if pd.isna(name):
+                continue
+            inflow = float(row["主力净流入"]) if not pd.isna(row.get("主力净流入")) else 0.0
+            if name not in _ts_accumulator:
+                _ts_accumulator[name] = []
+            # 跳过同一分钟的重复记录
+            if _ts_accumulator[name] and _ts_accumulator[name][-1][0] == now_str:
+                continue
+            _ts_accumulator[name].append((now_str, inflow))
+
+
+# ── 启动/停止 ──
+def start_collector(interval_sec: int = 180):
+    """启动后台数据采集线程"""
+    c = BackgroundCollector(interval_sec=interval_sec)
+    c.start()
+
+
+def stop_collector():
+    """停止后台采集"""
+    global _collector_running
+    _collector_running = False
 
 
 def get_intraday_series(sector_name: str) -> pd.DataFrame:
     """返回板块的累计时间序列 DataFrame[时间, 主力净流入]"""
-    points = _ts_accumulator.get(sector_name, [])
+    with _ts_lock:
+        points = list(_ts_accumulator.get(sector_name, []))
     if not points:
         return pd.DataFrame()
     return pd.DataFrame(points, columns=["时间", "主力净流入"])
+
+
+def get_snapshot_count() -> int:
+    """返回已记录的快照轮数（用于调试）"""
+    return len(_ts_accumulator) and max(
+        (len(v) for v in _ts_accumulator.values()), default=0
+    ) or 0
 
 
 def get_last_error() -> str:

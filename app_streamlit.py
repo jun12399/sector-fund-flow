@@ -15,7 +15,7 @@ import streamlit as st
 
 from fund_flow_fetcher import (
     fetch_sector_rank, fetch_sector_intraday, is_trading_time,
-    get_last_error, record_snapshot, get_intraday_series,
+    get_last_error, start_collector, get_intraday_series, get_snapshot_count,
 )
 from visualize import build_dashboard, build_mock_data
 
@@ -52,10 +52,7 @@ def render_once():
                 st.error(f"❌ 数据获取失败：{err}")
                 st.info("💡 请切换到 mock 模式查看演示数据，或等待 1-2 分钟后刷新")
                 return
-            # 记录快照到时间序列累加器（替代不可用的 push2his 分钟K线API）
-            record_snapshot(df_rank)
-
-            # 从累加器读取走势数据（优先），空则尝试实时API兜底
+            # 后台采集线程已在记录快照，这里只读取
             hist_data = {}
             failed = 0
             for _, row in df_rank.head(top_line_n).iterrows():
@@ -81,9 +78,13 @@ def render_once():
     status_bar.info(
         f"最近刷新：{datetime.now():%H:%M:%S}  |  "
         f"下次自动刷新：{refresh_sec}秒后  |  "
+        f"快照轮数：{get_snapshot_count()}  |  "
         f"交易时段：{'✅' if is_trading_time() else '❌'}"
     )
 
+
+# ── 启动后台采集线程（独立于页面打开，持续记录）──
+start_collector(interval_sec=refresh_sec)
 
 # 初次渲染
 render_once()
