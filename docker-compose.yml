@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  fund-flow:
+    build: .
+    container_name: sector-fund-flow
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      # 数据持久化：容器重启/重建不丢失历史快照
+      - ./data/snapshots:/app/data/snapshots
+    environment:
+      - TZ=Asia/Shanghai
+    # 健康检查：每 60 秒确认应用存活
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
