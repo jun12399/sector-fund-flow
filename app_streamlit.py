@@ -1,58 +1,88 @@
 """
-Streamlit 实时监控面板 —— A 股板块资金流向
-2026-07-06
+A 股板块资金流向实时监控面板
+2026-07-07
 
 启动方式：
-    pip install streamlit plotly pandas
     streamlit run app_streamlit.py
-
 浏览器打开 http://localhost:8501
+
+功能：
+- 启动即自动采集数据（无需打开页面）
+- 闭市后自动显示全天完整走势
+- 支持历史任意日期回看
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import streamlit as st
 
 from fund_flow_fetcher import (
     fetch_sector_rank, fetch_sector_intraday, is_trading_time,
-    get_last_error, start_collector, get_intraday_series, get_snapshot_count,
+    get_last_error, get_intraday_series, get_snapshot_count,
+    load_day_data, get_available_dates,
 )
 from visualize import build_dashboard, build_mock_data
 
 
-# --------------------------------------------------------------
-st.set_page_config(page_title="A股资金流向监控", layout="wide", page_icon="📈")
+# ── 页面配置 ──
+st.set_page_config(page_title="A股板块资金流向", layout="wide", page_icon="📈")
 st.title("📈 A 股板块资金流向实时监控")
-# --------------------------------------------------------------
 
+# ── 侧边栏 ──
 with st.sidebar:
     st.header("⚙️ 设置")
-    sector_type = st.radio("板块类型", ["concept", "industry"],
-                           format_func=lambda x: "概念板块" if x == "concept" else "行业板块")
-    top_line_n = st.slider("画折线的板块数量", 3, 12, 7)
-    top_rank_n = st.slider("榜单显示前几名", 10, 30, 15)
-    refresh_sec = st.slider("刷新间隔（秒）", 60, 600, 180, step=30,
-                             help="3 分钟 = 180；5 分钟 = 300")
-    use_mock = st.checkbox("使用 mock 数据（测试/闭市）", value=not is_trading_time())
+
+    # 模式选择
+    view_mode = st.radio(
+        "查看模式",
+        ["实时监控", "历史回看"],
+        format_func=lambda x: f"📡 {x}" if x == "实时监控" else f"📅 {x}",
+    )
+
+    sector_type = st.radio(
+        "板块类型",
+        ["concept", "industry"],
+        format_func=lambda x: "概念板块" if x == "concept" else "行业板块",
+    )
+
+    # 历史回看模式：日期选择
+    hist_date = None
+    if view_mode == "历史回看":
+        available = get_available_dates()
+        if available:
+            hist_date = st.selectbox("选择日期", available, index=0)
+        else:
+            st.warning("暂无历史数据")
+            hist_date = None
+
+    top_line_n = st.slider("折线板块数量", 3, 12, 7)
+    top_rank_n = st.slider("榜单前几名", 10, 50, 20)
+
+    if view_mode == "实时监控":
+        refresh_sec = st.slider("刷新间隔（秒）", 60, 600, 180, step=30,
+                                help="3 分钟 = 180；5 分钟 = 300")
+        use_mock = st.checkbox("使用模拟数据", value=False)
+
     manual_refresh = st.button("🔄 立即刷新")
 
 placeholder = st.empty()
 status_bar = st.empty()
 
 
-def render_once():
+# ── 渲染函数 ──
+def render_realtime():
+    """实时监控模式"""
     with placeholder.container():
         if use_mock:
             hist_data, df_rank = build_mock_data()
-            ts = f"{datetime.now():%Y-%m-%d %H:%M:%S}（mock）"
+            ts = f"{datetime.now():%Y-%m-%d %H:%M:%S}（模拟数据）"
         else:
             df_rank = fetch_sector_rank(sector_type=sector_type, top_n=top_rank_n)
             if df_rank.empty:
-                err = get_last_error() or "东财 API 无响应（可能触发了反爬限流）"
+                err = get_last_error() or "东方财富 API 无响应"
                 st.error(f"❌ 数据获取失败：{err}")
-                st.info("💡 请切换到 mock 模式查看演示数据，或等待 1-2 分钟后刷新")
+                st.info("💡 可切换到「历史回看」模式查看已有数据，或等待网络恢复")
                 return
-            # 后台采集线程已在记录快照，这里只读取
             hist_data = {}
             failed = 0
             for _, row in df_rank.head(top_line_n).iterrows():
@@ -66,30 +96,81 @@ def render_once():
                     failed += 1
             ts = f"{datetime.now():%Y-%m-%d %H:%M:%S}"
             if failed > 0:
-                st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（等待下一次刷新积累数据点）")
+                st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（后台采集中）")
 
         fig = build_dashboard(hist_data, df_rank, ts)
         st.plotly_chart(fig, use_container_width=True)
 
-        # 明细榜单
+        with st.expander("📋 完整榜单明细"):
+            st.dataframe(df_rank, use_container_width=True)
+
+    n = get_snapshot_count()
+    status_bar.info(
+        f"最近刷新：{datetime.now():%H:%M:%S}  |  "
+        f"下次刷新：{refresh_sec}秒后  |  "
+        f"已采集：{n}轮  |  "
+        f"交易时段：{'✅ 是' if is_trading_time() else '❌ 已闭市'}"
+    )
+
+
+def render_history():
+    """历史回看模式"""
+    with placeholder.container():
+        if not hist_date:
+            st.info("📅 请先选择一个日期")
+            return
+
+        all_data = load_day_data(hist_date, sector_type)
+        if not all_data:
+            st.warning(f"📅 {hist_date} 暂无数据记录")
+            return
+
+        # 按最新值排序取 top N
+        latest_vals = {}
+        for name, df in all_data.items():
+            if not df.empty:
+                latest_vals[name] = df["主力净流入"].iloc[-1]
+
+        sorted_names = sorted(latest_vals, key=lambda x: latest_vals[x], reverse=True)[:top_rank_n]
+
+        # 构建排行 DataFrame
+        df_rank_data = []
+        for i, name in enumerate(sorted_names):
+            df_rank_data.append({
+                "板块名称": name,
+                "主力净流入": latest_vals[name],
+                "板块代码": "",
+                "涨跌幅%": 0,
+            })
+        df_rank = __import__("pandas").DataFrame(df_rank_data)
+
+        # 取 top N 折线
+        hist_data = {}
+        for name in sorted_names[:top_line_n]:
+            df = all_data[name]
+            if not df.empty:
+                hist_data[name] = df[["时间", "主力净流入"]]
+
+        ts = f"{hist_date}（历史回看）"
+        fig = build_dashboard(hist_data, df_rank, ts)
+        st.plotly_chart(fig, use_container_width=True)
+
         with st.expander("📋 完整榜单明细"):
             st.dataframe(df_rank, use_container_width=True)
 
     status_bar.info(
-        f"最近刷新：{datetime.now():%H:%M:%S}  |  "
-        f"下次自动刷新：{refresh_sec}秒后  |  "
-        f"快照轮数：{get_snapshot_count()}  |  "
-        f"交易时段：{'✅' if is_trading_time() else '❌'}"
+        f"📅 查看日期：{hist_date}  |  "
+        f"板块类型：{'概念板块' if sector_type == 'concept' else '行业板块'}  |  "
+        f"数据点数：{get_snapshot_count()}轮"
     )
 
 
-# ── 启动后台采集线程（独立于页面打开，持续记录）──
-start_collector(interval_sec=refresh_sec)
+# ── 主逻辑 ──
+if view_mode == "实时监控":
+    render_realtime()
+else:
+    render_history()
 
-# 初次渲染
-render_once()
-
-# 自动刷新循环
-if not manual_refresh:
+if not manual_refresh and view_mode == "实时监控":
     time.sleep(refresh_sec)
     st.rerun()

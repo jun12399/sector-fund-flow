@@ -455,6 +455,61 @@ def get_last_error() -> str:
     return _last_error
 
 
+def load_day_data(date_str: str, sector_type: str = "concept") -> dict[str, pd.DataFrame]:
+    """
+    加载指定日期的历史数据。
+    :param date_str: YYYY-MM-DD 格式
+    :param sector_type: concept / industry
+    :return: {板块名称: DataFrame[时间, 主力净流入]}
+    """
+    fp = os.path.join(_SNAPSHOT_DIR, f"{date_str}.jsonl")
+    if not os.path.exists(fp):
+        return {}
+
+    temp: dict[str, list[tuple[str, float]]] = {}
+    with open(fp, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                key = _make_key(rec["s"], rec["n"])
+                if key not in temp:
+                    temp[key] = []
+                temp[key].append((rec["t"], rec["v"]))
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    result: dict[str, pd.DataFrame] = {}
+    prefix = "c" if sector_type == "concept" else "i"
+    for key, points in temp.items():
+        if not key.startswith(f"{prefix}:"):
+            continue
+        name = key[2:]  # 去掉 "c:" 或 "i:"
+        df = pd.DataFrame(points, columns=["时间", "主力净流入"])
+        result[name] = df
+    return result
+
+
+def get_available_dates() -> list[str]:
+    """返回所有有数据的日期列表（从最新到最旧）"""
+    files = sorted(glob.glob(os.path.join(_SNAPSHOT_DIR, "*.jsonl")), reverse=True)
+    dates = []
+    for fp in files:
+        basename = os.path.basename(fp)
+        if basename[:10].count("-") == 2:
+            dates.append(basename[:10])
+    return dates
+
+
+# ── 模块加载时自动启动后台采集 ──
+_load_history()
+_cleanup_old_files()
+_start_collector = BackgroundCollector(interval_sec=180)
+_start_collector.start()
+
+
 # ═══════════════════════════════════════════════════════════════
 # 接口 1：东财板块资金流向排行榜（主源）
 # ═══════════════════════════════════════════════════════════════
