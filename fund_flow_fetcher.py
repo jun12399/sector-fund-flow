@@ -506,7 +506,8 @@ def get_available_dates() -> list[str]:
 # ── 模块加载时自动启动后台采集 ──
 _load_history()
 _cleanup_old_files()
-_start_collector = BackgroundCollector(interval_sec=180)
+# top_n=150 覆盖行业128全量 + 概念前150名，确保所有板块从开盘就有数据
+_start_collector = BackgroundCollector(interval_sec=180, top_n=150)
 _start_collector.start()
 
 
