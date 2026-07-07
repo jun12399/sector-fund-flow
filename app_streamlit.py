@@ -19,7 +19,7 @@ import streamlit as st
 from fund_flow_fetcher import (
     fetch_sector_rank, fetch_sector_intraday, is_trading_time,
     get_last_error, get_intraday_series, get_snapshot_count,
-    load_day_data, get_available_dates,
+    load_day_data, get_available_dates, stop_collector,
 )
 from visualize import build_dashboard, build_mock_data
 
@@ -69,6 +69,24 @@ placeholder = st.empty()
 status_bar = st.empty()
 
 
+def _build_fallback_rank(sector_type: str, top_n: int):
+    """API 不可用时，从累加器构建临时排行"""
+    from fund_flow_fetcher import load_day_data
+    today = datetime.now().strftime("%Y-%m-%d")
+    all_data = load_day_data(today, sector_type)
+    if not all_data:
+        return __import__("pandas").DataFrame()
+    rows = []
+    for name, df in all_data.items():
+        if not df.empty:
+            rows.append({"板块名称": name, "主力净流入": df["主力净流入"].iloc[-1]})
+    if not rows:
+        return __import__("pandas").DataFrame()
+    df = __import__("pandas").DataFrame(rows)
+    df = df.sort_values("主力净流入", ascending=False).head(top_n).reset_index(drop=True)
+    return df
+
+
 # ── 渲染函数 ──
 def render_realtime():
     """实时监控模式"""
@@ -79,17 +97,18 @@ def render_realtime():
         else:
             df_rank = fetch_sector_rank(sector_type=sector_type, top_n=top_rank_n)
             if df_rank.empty:
-                err = get_last_error() or "东方财富 API 无响应"
-                st.error(f"❌ 数据获取失败：{err}")
-                st.info("💡 可切换到「历史回看」模式查看已有数据，或等待网络恢复")
-                return
+                # API 暂时不可用，用累加器最新数据降级展示
+                st.warning("⚠️ 实时排行 API 暂时无响应，以下为后台已采集的最新数据")
+                df_rank = _build_fallback_rank(sector_type, top_rank_n)
+                if df_rank.empty:
+                    st.error("❌ 暂无任何数据，请等待后台采集或检查网络")
+                    return
+
             hist_data = {}
             failed = 0
             for _, row in df_rank.head(top_line_n).iterrows():
                 name = row["板块名称"]
                 df = get_intraday_series(name, sector_type)
-                if df.empty:
-                    df = fetch_sector_intraday(row["板块代码"])
                 if not df.empty:
                     hist_data[name] = df[["时间", "主力净流入"]]
                 else:
