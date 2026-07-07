@@ -278,7 +278,8 @@ _last_error: str = ""
 
 
 def _make_key(sector_type: str, name: str) -> str:
-    prefix = "c" if sector_type == "concept" else "i"
+    # 兼容 "concept"/"industry" 和 "c"/"i" 两种入参
+    prefix = "c" if sector_type in ("concept", "c") else "i"
     return f"{prefix}:{name}"
 
 
