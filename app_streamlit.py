@@ -99,7 +99,12 @@ def render_realtime():
                 st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（后台采集中）")
 
         fig = build_dashboard(hist_data, df_rank, ts)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={
+            "locale": "zh-CN",
+            "displaylogo": False,
+            "toImageButtonOptions": {"filename": "资金流向", "format": "png"},
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+        })
 
         with st.expander("📋 完整榜单明细"):
             st.dataframe(df_rank, use_container_width=True)
@@ -153,7 +158,12 @@ def render_history():
 
         ts = f"{hist_date}（历史回看）"
         fig = build_dashboard(hist_data, df_rank, ts)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={
+            "locale": "zh-CN",
+            "displaylogo": False,
+            "toImageButtonOptions": {"filename": f"资金流向_{hist_date}", "format": "png"},
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+        })
 
         with st.expander("📋 完整榜单明细"):
             st.dataframe(df_rank, use_container_width=True)
