@@ -118,7 +118,11 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
     top = df_rank.head(12).copy()
     top.insert(0, "排名", range(1, len(top) + 1))
     top["主力净流入"] = top["主力净流入"].apply(lambda x: f"{x:+.2f}亿")
-    top["涨跌幅%"] = top["涨跌幅%"].apply(lambda x: f"{x:+.2f}%")
+    # 涨跌幅可能缺失（降级数据），兼容处理
+    if "涨跌幅%" in top.columns:
+        top["涨跌幅%"] = top["涨跌幅%"].apply(lambda x: f"{x:+.2f}%")
+    else:
+        top["涨跌幅%"] = "-"
 
     # 颜色：红涨绿跌（A 股习惯）
     def cell_color(val):

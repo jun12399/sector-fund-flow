@@ -79,7 +79,12 @@ def _build_fallback_rank(sector_type: str, top_n: int):
     rows = []
     for name, df in all_data.items():
         if not df.empty:
-            rows.append({"板块名称": name, "主力净流入": df["主力净流入"].iloc[-1]})
+            rows.append({
+                "板块名称": name,
+                "主力净流入": df["主力净流入"].iloc[-1],
+                "涨跌幅%": 0,
+                "板块代码": "",
+            })
     if not rows:
         return __import__("pandas").DataFrame()
     df = __import__("pandas").DataFrame(rows)
@@ -165,6 +170,7 @@ def render_history():
                 "主力净流入": latest_vals[name],
                 "板块代码": "",
                 "涨跌幅%": 0,
+                "最新价": 0,
             })
         df_rank = __import__("pandas").DataFrame(df_rank_data)
 
