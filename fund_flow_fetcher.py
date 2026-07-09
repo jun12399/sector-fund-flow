@@ -365,7 +365,8 @@ class BackgroundCollector:
                     continue
 
                 for stype in ("concept", "industry"):
-                    df = _fetch_sector_rank_eastmoney(self._fetcher, sector_type=stype, top_n=self.top_n)
+                    # 用 fetch_sector_rank 拉取，自动预热 UI 缓存
+                    df = fetch_sector_rank(sector_type=stype, top_n=self.top_n, fetcher=self._fetcher)
                     if df.empty:
                         continue
                     with _ts_lock:
@@ -567,7 +568,8 @@ def _fetch_sector_rank_ths(
 # ═══════════════════════════════════════════════════════════════
 # 对外接口 1：板块排行（含双源自动 fallback + 缓存）
 # ═══════════════════════════════════════════════════════════════
-_cache_rank: dict = {"data": None, "ts": None, "ttl": 30}  # 30秒缓存
+_cache_rank: dict[str, tuple[pd.DataFrame, datetime]] = {}  # {key: (df, ts)}
+_cache_rank_ttl: int = 180  # 排行榜缓存 3 分钟（与采集间隔一致）
 _cache_intraday: dict = {}  # {code: (df, ts)}
 
 
@@ -579,17 +581,17 @@ def fetch_sector_rank(
 ) -> pd.DataFrame:
     """
     获取板块资金流向排行榜（按主力净流入降序）
-    内置 30 秒缓存，避免连续刷新触发反爬。
+    内置缓存，切换板块秒出。
     """
     global _last_error, _cache_rank
 
-    # 读缓存
+    # 按板块类型分别缓存
     cache_key = f"{sector_type}_{top_n}"
-    entry = _cache_rank.get("data")
-    if entry is not None and _cache_rank.get("ts"):
-        age = (datetime.now() - _cache_rank["ts"]).total_seconds()
-        if age < _cache_rank.get("ttl", 30):
-            return entry
+    entry = _cache_rank.get(cache_key)
+    if entry is not None:
+        df_cached, ts = entry
+        if (datetime.now() - ts).total_seconds() < _cache_rank_ttl:
+            return df_cached.copy()
 
     f = fetcher or _default_fetcher
     df = _fetch_sector_rank_eastmoney(f, sector_type, top_n)
@@ -598,10 +600,10 @@ def fetch_sector_rank(
         df = _fetch_sector_rank_ths(f, sector_type, top_n)
 
     if df.empty:
-        _last_error = f"东财 API 无响应（已重试 4 次），可切换 mock 模式"
+        _last_error = "东财 API 无响应（已重试 4 次）"
     else:
         _last_error = ""
-        _cache_rank = {"data": df.copy(), "ts": datetime.now(), "ttl": 30}
+        _cache_rank[cache_key] = (df.copy(), datetime.now())
 
     return df
 

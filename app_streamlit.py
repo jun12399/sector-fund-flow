@@ -127,13 +127,14 @@ def render_realtime():
             if failed > 0:
                 st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（后台采集中）")
 
-        # 图表缓存：只有排名变化或快照数变化时才重绘
+        # 图表缓存：排名不变就直接复用（切换板块秒出）
         n = get_snapshot_count()
-        cache_key = f"{sector_type}_{top_line_n}_{n}_{tuple(df_rank['板块名称'].head(7))}"
-        if cache_key != st.session_state.fig_hash or "cached_fig" not in st.session_state.fig_cache:
+        cache_key = f"{sector_type}_{top_line_n}"
+        old_n = st.session_state.fig_cache.get(f"{cache_key}_n", 0)
+        if old_n != n or "cached_fig" not in st.session_state.fig_cache:
             fig = build_dashboard(hist_data, df_rank, ts)
             st.session_state.fig_cache["cached_fig"] = fig
-            st.session_state.fig_hash = cache_key
+            st.session_state.fig_cache[f"{cache_key}_n"] = n
         else:
             fig = st.session_state.fig_cache["cached_fig"]
 
