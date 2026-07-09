@@ -68,6 +68,11 @@ with st.sidebar:
 placeholder = st.empty()
 status_bar = st.empty()
 
+# 图表缓存（避免切换时重复渲染）
+if "fig_cache" not in st.session_state:
+    st.session_state.fig_cache = {}
+    st.session_state.fig_hash = ""
+
 
 def _build_fallback_rank(sector_type: str, top_n: int):
     """API 不可用时，从累加器构建临时排行"""
@@ -122,7 +127,16 @@ def render_realtime():
             if failed > 0:
                 st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（后台采集中）")
 
-        fig = build_dashboard(hist_data, df_rank, ts)
+        # 图表缓存：只有排名变化或快照数变化时才重绘
+        n = get_snapshot_count()
+        cache_key = f"{sector_type}_{top_line_n}_{n}_{tuple(df_rank['板块名称'].head(7))}"
+        if cache_key != st.session_state.fig_hash or "cached_fig" not in st.session_state.fig_cache:
+            fig = build_dashboard(hist_data, df_rank, ts)
+            st.session_state.fig_cache["cached_fig"] = fig
+            st.session_state.fig_hash = cache_key
+        else:
+            fig = st.session_state.fig_cache["cached_fig"]
+
         st.plotly_chart(fig, use_container_width=True, config={
             "locale": "zh-CN",
             "displaylogo": False,
