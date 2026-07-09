@@ -284,39 +284,32 @@ def _make_key(sector_type: str, name: str) -> str:
 
 
 def _load_history():
-    """启动时加载最近 30 天的历史快照到内存"""
+    """启动时只加载今天的快照到内存（历史数据走 load_day_data 按需读取）"""
     global _ts_accumulator
     loaded = 0
-    cutoff = datetime.now() - timedelta(days=_RETENTION_DAYS)
     os.makedirs(_SNAPSHOT_DIR, exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(_SNAPSHOT_DIR, "*.jsonl")))
-    for fp in files:
-        # 从文件名提取日期
-        basename = os.path.basename(fp)
-        try:
-            file_date = datetime.strptime(basename[:10], "%Y-%m-%d")
-        except ValueError:
-            continue
-        if file_date < cutoff:
-            continue  # 跳过往期但仍保留（清理在 _cleanup 做）
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    fp = os.path.join(_SNAPSHOT_DIR, f"{today_str}.jsonl")
+    if not os.path.exists(fp):
+        return
 
-        with open(fp, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    key = _make_key(rec["s"], rec["n"])
-                    if key not in _ts_accumulator:
-                        _ts_accumulator[key] = []
-                    _ts_accumulator[key].append((rec["t"], rec["v"]))
-                    loaded += 1
-                except (json.JSONDecodeError, KeyError):
-                    continue
+    with open(fp, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                key = _make_key(rec["s"], rec["n"])
+                if key not in _ts_accumulator:
+                    _ts_accumulator[key] = []
+                _ts_accumulator[key].append((rec["t"], rec["v"]))
+                loaded += 1
+            except (json.JSONDecodeError, KeyError):
+                continue
     if loaded:
-        print(f"[数据] 已加载 {loaded} 条历史快照（最近 {_RETENTION_DAYS} 天）")
+        print(f"[数据] 已加载今日 {loaded} 条快照")
 
 
 def _cleanup_old_files():
