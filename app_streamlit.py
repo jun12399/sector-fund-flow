@@ -128,16 +128,18 @@ def render_realtime():
             if failed > 0:
                 st.warning(f"⚠️ {failed}/{top_line_n} 个板块暂无分钟数据（后台采集中）")
 
-        # 图表缓存：排名不变就直接复用（切换板块秒出）
+        # 图表缓存：概念/行业各存各的，数据不变就复用
         n = get_snapshot_count()
         cache_key = f"{sector_type}_{top_line_n}"
-        old_n = st.session_state.fig_cache.get(f"{cache_key}_n", 0)
-        if old_n != n or "cached_fig" not in st.session_state.fig_cache:
+        fig_key = f"fig_{cache_key}"
+        n_key = f"n_{cache_key}"
+        old_n = st.session_state.fig_cache.get(n_key, 0)
+        if old_n != n or fig_key not in st.session_state.fig_cache:
             fig = build_dashboard(hist_data, df_rank, ts)
-            st.session_state.fig_cache["cached_fig"] = fig
-            st.session_state.fig_cache[f"{cache_key}_n"] = n
+            st.session_state.fig_cache[fig_key] = fig
+            st.session_state.fig_cache[n_key] = n
         else:
-            fig = st.session_state.fig_cache["cached_fig"]
+            fig = st.session_state.fig_cache[fig_key]
 
         st.plotly_chart(fig, use_container_width=True, config={
             "locale": "zh-CN",
