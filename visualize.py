@@ -82,14 +82,22 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
         horizontal_spacing=0.04,
     )
 
-    # 左：多板块折线叠加（高区分度 12 色调色板）
+    # 左：多板块折线叠加 — 高区分度配色 + 不同线型 + 不同标记
     palette = [
-        "#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6",
-        "#1ABC9C", "#E67E22", "#2980B9", "#C0392B", "#27AE60",
-        "#8E44AD", "#D35400",
+        "#E74C3C", "#2980B9", "#27AE60", "#E67E22", "#8E44AD",
+        "#16A085", "#D35400", "#2C3E50", "#C0392B", "#2471A3",
+        "#1E8449", "#B9770E",
     ]
+    dash_styles = ["solid", "dot", "dash", "dashdot", "longdash",
+                   "solid", "dot", "dash", "dashdot", "longdash",
+                   "solid", "dot"]
+    marker_symbols = ["circle", "diamond", "square", "triangle-up", "cross",
+                      "x", "triangle-down", "star", "hexagon", "pentagon",
+                      "hourglass", "bowtie"]
+
     for i, (name, df) in enumerate(hist_data.items()):
         final = df["主力净流入"].iloc[-1]
+        c = palette[i % len(palette)]
         label = f"{name}  {final:+.2f}亿"
         fig.add_trace(
             go.Scatter(
@@ -97,21 +105,25 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
                 y=df["主力净流入"],
                 mode="lines+markers",
                 name=label,
-                line=dict(color=palette[i % len(palette)], width=2.5),
-                marker=dict(size=3, color=palette[i % len(palette)]),
-                hovertemplate="%{x}<br>净流入: %{y:.2f}亿<extra></extra>",
+                line=dict(color=c, width=2.8, dash=dash_styles[i % len(dash_styles)]),
+                marker=dict(
+                    size=5, color=c,
+                    symbol=marker_symbols[i % len(marker_symbols)],
+                    line=dict(width=1, color="white"),
+                ),
+                hovertemplate="<b>%{fullData.name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>",
             ),
             row=1, col=1,
         )
 
     fig.update_xaxes(
         title_text="时间", row=1, col=1,
-        showgrid=True, gridcolor="#eee",
+        showgrid=True, gridcolor="#e8e8e8", tickangle=-45, nticks=15,
     )
     fig.update_yaxes(
         title_text="主力净流入（亿元）", row=1, col=1,
-        showgrid=True, gridcolor="#eee",
-        zeroline=True, zerolinecolor="#888", zerolinewidth=1,
+        showgrid=True, gridcolor="#e8e8e8",
+        zeroline=True, zerolinecolor="#555", zerolinewidth=1.5,
     )
 
     # 右：榜单表格
@@ -162,14 +174,16 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
     )
 
     fig.update_layout(
-        height=560,
-        margin=dict(l=50, r=30, t=70, b=50),
+        height=600,
+        margin=dict(l=50, r=30, t=90, b=50),
         legend=dict(
-            orientation="v",
-            yanchor="top", y=1,
-            xanchor="left", x=1.02,
-            font=dict(size=11),
-            bgcolor="rgba(255,255,255,0.9)",
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="center", x=0.5,
+            font=dict(size=12),
+            bgcolor="rgba(255,255,255,0.95)",
+            bordercolor="#ddd",
+            borderwidth=1,
         ),
         plot_bgcolor="white",
         paper_bgcolor="white",
