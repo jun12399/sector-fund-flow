@@ -100,6 +100,7 @@ def _build_fallback_rank(sector_type: str, top_n: int):
 # ── 渲染函数 ──
 def render_realtime():
     """实时监控模式"""
+    _t0 = time.time()
     with placeholder.container():
         if use_mock:
             hist_data, df_rank = build_mock_data()
@@ -149,10 +150,11 @@ def render_realtime():
             st.dataframe(df_rank, use_container_width=True)
 
     n = get_snapshot_count()
+    _elapsed = time.time() - _t0
     status_bar.info(
         f"最近刷新：{datetime.now():%H:%M:%S}  |  "
         f"下次刷新：{refresh_sec}秒后  |  "
-        f"已采集：{n}轮  |  "
+        f"已采集：{n}轮  |  渲染耗时：{_elapsed:.1f}秒  |  "
         f"交易时段：{'✅ 是' if is_trading_time() else '❌ 已闭市'}"
     )
 
