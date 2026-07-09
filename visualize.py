@@ -82,15 +82,12 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
         horizontal_spacing=0.04,
     )
 
-    # 左：多板块折线叠加 — 高区分度配色 + 不同线型 + 不同标记
+    # 左：多板块折线 — Tableau 高对比色（远看也能区分）
     palette = [
-        "#E74C3C", "#2980B9", "#27AE60", "#E67E22", "#8E44AD",
-        "#16A085", "#D35400", "#2C3E50", "#C0392B", "#2471A3",
-        "#1E8449", "#B9770E",
+        "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4",
+        "#42D4F4", "#F032E6", "#BFEF45", "#FABE4B", "#469990",
+        "#9A6324", "#800000",
     ]
-    dash_styles = ["solid", "dot", "dash", "dashdot", "longdash",
-                   "solid", "dot", "dash", "dashdot", "longdash",
-                   "solid", "dot"]
     marker_symbols = ["circle", "diamond", "square", "triangle-up", "cross",
                       "x", "triangle-down", "star", "hexagon", "pentagon",
                       "hourglass", "bowtie"]
@@ -105,11 +102,11 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
                 y=df["主力净流入"],
                 mode="lines+markers",
                 name=label,
-                line=dict(color=c, width=2.8, dash=dash_styles[i % len(dash_styles)]),
+                line=dict(color=c, width=3),
                 marker=dict(
-                    size=5, color=c,
+                    size=6, color=c,
                     symbol=marker_symbols[i % len(marker_symbols)],
-                    line=dict(width=1, color="white"),
+                    line=dict(width=1.5, color="white"),
                 ),
                 hovertemplate="<b>%{fullData.name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>",
             ),
@@ -174,16 +171,14 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
     )
 
     fig.update_layout(
-        height=600,
-        margin=dict(l=50, r=30, t=90, b=50),
+        height=560,
+        margin=dict(l=50, r=30, t=70, b=50),
         legend=dict(
-            orientation="h",
-            yanchor="bottom", y=1.02,
-            xanchor="center", x=0.5,
-            font=dict(size=12),
-            bgcolor="rgba(255,255,255,0.95)",
-            bordercolor="#ddd",
-            borderwidth=1,
+            orientation="v",
+            yanchor="top", y=1,
+            xanchor="left", x=1.02,
+            font=dict(size=11),
+            bgcolor="rgba(255,255,255,0.9)",
         ),
         plot_bgcolor="white",
         paper_bgcolor="white",
