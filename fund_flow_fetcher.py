@@ -302,9 +302,13 @@ def _load_history():
             try:
                 rec = json.loads(line)
                 key = _make_key(rec["s"], rec["n"])
+                point = (rec["t"], rec["v"])
                 if key not in _ts_accumulator:
                     _ts_accumulator[key] = []
-                _ts_accumulator[key].append((rec["t"], rec["v"]))
+                # 去重：跳过已存在的同一时间点（避免重启后重复加载）
+                if _ts_accumulator[key] and _ts_accumulator[key][-1] == point:
+                    continue
+                _ts_accumulator[key].append(point)
                 loaded += 1
             except (json.JSONDecodeError, KeyError):
                 continue
