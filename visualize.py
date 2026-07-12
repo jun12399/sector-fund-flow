@@ -123,9 +123,18 @@ def build_dashboard(hist_data: dict, df_rank: pd.DataFrame, title_ts: str) -> go
         zeroline=True, zerolinecolor="#555", zerolinewidth=1.5,
     )
 
-    # 右：榜单表格
-    top = df_rank.head(12).copy()
-    top.insert(0, "排名", range(1, len(top) + 1))
+    # 右：榜单表格 — 前10 + 后10
+    total = len(df_rank)
+    if total <= 20:
+        top = df_rank.copy()
+        top.insert(0, "排名", range(1, len(top) + 1))
+    else:
+        top10 = df_rank.head(10).copy()
+        bottom10 = df_rank.tail(10).copy()
+        bottom_rank_start = total - 9  # 后10名的起始排名
+        top10.insert(0, "排名", range(1, 11))
+        bottom10.insert(0, "排名", range(bottom_rank_start, bottom_rank_start + 10))
+        top = pd.concat([top10, bottom10], ignore_index=True)
     top["主力净流入"] = top["主力净流入"].apply(lambda x: f"{x:+.2f}亿")
     # 涨跌幅可能缺失（降级数据），兼容处理
     if "涨跌幅%" in top.columns:
