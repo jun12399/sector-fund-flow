@@ -502,12 +502,8 @@ def get_available_dates() -> list[str]:
     return dates
 
 
-# ── 模块加载时自动启动后台采集 ──
-_load_history()
-_cleanup_old_files()
-# top_n=150 覆盖行业128全量 + 概念前150名，确保所有板块从开盘就有数据
-_start_collector = BackgroundCollector(interval_sec=180, top_n=150)
-_start_collector.start()
+# ── 后台采集启动已迁移至 server.py 的 lifespan 事件 ──
+# 如需在其他脚本中自动启动，请调用 start_collector()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -517,6 +513,7 @@ def _fetch_sector_rank_eastmoney(
     fetcher: SmartFetcher,
     sector_type: Literal["concept", "industry"] = "concept",
     top_n: int = 20,
+    page: int = 1,
 ) -> pd.DataFrame:
     # m:90+s:4 = 申万二级行业(128个) ← 网站实际数据源
     # m:90+t:3 = 概念板块(495个)
@@ -524,7 +521,7 @@ def _fetch_sector_rank_eastmoney(
     url = "https://push2.eastmoney.com/api/qt/clist/get"
 
     params = {
-        "pn": 1, "pz": top_n, "po": 1, "np": 1,
+        "pn": page, "pz": top_n, "po": 1, "np": 1,
         "fltt": 2, "invt": 2, "fs": fs, "stat": 1,
         "fields": "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87",
         "fid": "f62",

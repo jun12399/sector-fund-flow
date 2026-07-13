@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📈 A股板块资金流向</title>
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f5f5;
+    --card-bg: #ffffff;
+    --text: #262730;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --red-bg: #fff0f0;
+    --green-bg: #f0fff0;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Source Sans Pro", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── 顶部栏 ── */
+  .header {
+    background: var(--card-bg);
+    border-bottom: 2px solid var(--border);
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  }
+  .header h1 { font-size: 1.5rem; font-weight: 700; }
+  .header .status-dot {
+    width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px;
+  }
+  .header .status-dot.online { background: #22c55e; }
+  .header .status-dot.offline { background: #ef4444; }
+  .header .status-dot.idle { background: #f59e0b; }
+
+  /* ── 主布局 ── */
+  .main { display: flex; height: calc(100vh - 62px); }
+  .sidebar {
+    width: 260px; min-width: 260px;
+    background: var(--card-bg);
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .content {
+    flex: 1; display: flex; flex-direction: column;
+    padding: 16px 20px; overflow-y: auto;
+  }
+
+  /* ── 侧边栏控件 ── */
+  .sidebar h3 { font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .ctrl-group { display: flex; flex-direction: column; gap: 6px; }
+  .ctrl-group label { font-size: 0.9rem; font-weight: 600; }
+  .ctrl-group select, .ctrl-group input[type=range] { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }
+  .ctrl-group input[type=range] { padding: 0; }
+  .ctrl-group .range-val { text-align: center; font-size: 0.85rem; color: var(--muted); }
+  .radio-group { display: flex; gap: 4px; }
+  .radio-group button {
+    flex: 1; padding: 7px 0; border: 1px solid var(--border); background: var(--card-bg);
+    cursor: pointer; font-size: 0.85rem; border-radius: 6px; transition: all 0.15s;
+  }
+  .radio-group button.active {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .btn-refresh {
+    width: 100%; padding: 10px; background: var(--accent); color: #fff;
+    border: none; border-radius: 6px; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-refresh:hover { opacity: 0.9; }
+  .sidebar .hint { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+
+  /* ── 图表区域 ── */
+  .chart-container { flex: 1; min-height: 0; }
+  #chart { width: 100%; height: 100%; }
+
+  /* ── 底部状态栏 ── */
+  .status-bar {
+    display: flex; align-items: center; gap: 20px; padding: 10px 20px;
+    background: var(--card-bg); border-top: 1px solid var(--border);
+    font-size: 0.85rem; color: var(--muted); flex-wrap: wrap;
+  }
+  .status-bar .countdown { font-weight: 700; color: var(--accent); min-width: 80px; }
+
+  /* ── 完整榜单表格 ── */
+  .full-rank { margin-top: 16px; position: relative; }
+  .full-rank summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+  .full-rank .table-wrap { max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .full-rank.fullscreen { position: fixed; inset: 0; z-index: 9999; background: var(--card-bg); padding: 20px; margin: 0; display: flex; flex-direction: column; }
+  .full-rank.fullscreen .table-wrap { flex: 1; max-height: none; }
+  .full-rank table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .full-rank th { background: #34495e; color: #fff; padding: 8px 10px; text-align: center; position: sticky; top: 0; z-index: 1; }
+  .full-rank td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  .full-rank td:nth-child(1), .full-rank td:nth-child(2) { text-align: center; }
+  .full-rank td.pos { background: var(--red-bg); }
+  .full-rank td.neg { background: var(--green-bg); }
+  .btn-fullscreen {
+    display: none; position: absolute; right: 8px; top: 2px;
+    padding: 2px 10px; font-size: 0.8rem; border: 1px solid var(--border);
+    background: var(--card-bg); border-radius: 4px; cursor: pointer; z-index: 2;
+  }
+  .full-rank[open] .btn-fullscreen { display: inline-block; }
+  .full-rank.fullscreen .btn-fullscreen { position: fixed; right: 28px; top: 28px; }
+  .full-rank.fullscreen summary { font-size: 1.1rem; }
+
+  /* ── 响应式 ── */
+  @media (max-width: 768px) {
+    .main { flex-direction: column; }
+    .sidebar { width: 100%; min-width: auto; flex-direction: row; flex-wrap: wrap; gap: 10px; padding: 10px; }
+    .sidebar > * { flex: 1; min-width: 100px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── 顶部标题栏 ── -->
+<div class="header">
+  <h1>📈 A 股板块资金流向实时监控</h1>
+  <span>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="tradingLabel">--</span>
+  </span>
+</div>
+
+<!-- ── 主布局 ── -->
+<div class="main">
+
+  <!-- 侧边栏 -->
+  <div class="sidebar">
+    <h3>⚙️ 设置</h3>
+
+    <div class="ctrl-group">
+      <label>查看模式</label>
+      <div class="radio-group" id="modeGroup">
+        <button class="active" data-mode="realtime">📡 实时</button>
+        <button data-mode="history">📅 历史</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>板块类型</label>
+      <div class="radio-group" id="sectorGroup">
+        <button class="active" data-sector="concept">概念板块</button>
+        <button data-sector="industry">行业板块</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="dateGroup" style="display:none">
+      <label>选择日期</label>
+      <select id="dateSelect"></select>
+    </div>
+
+    <div class="ctrl-group">
+      <label>📈 折线图 — 流入前几名</label>
+      <input type="range" id="lineTopN" min="1" max="12" value="10" step="1">
+      <div class="range-val"><span id="lineTopNVal">10</span></div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>📈 折线图 — 流出后几名</label>
+      <input type="range" id="lineBotN" min="1" max="12" value="10" step="1">
+      <div class="range-val"><span id="lineBotNVal">10</span></div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>📋 资金榜 — 流入前几名</label>
+      <input type="range" id="rankTopN" min="5" max="30" value="10" step="1">
+      <div class="range-val"><span id="rankTopNVal">10</span></div>
+    </div>
+
+    <div class="ctrl-group">
+      <label>📋 资金榜 — 流出后几名</label>
+      <input type="range" id="rankBotN" min="5" max="30" value="10" step="1">
+      <div class="range-val"><span id="rankBotNVal">10</span></div>
+    </div>
+
+    <div class="ctrl-group" id="refreshGroup">
+      <label>刷新间隔（秒）</label>
+      <input type="range" id="refreshSec" min="60" max="600" value="180" step="30">
+      <div class="range-val"><span id="refreshSecVal">180</span> 秒</div>
+      <div class="hint">3 分钟 = 180；5 分钟 = 300</div>
+    </div>
+
+    <button class="btn-refresh" id="btnRefresh">🔄 立即刷新</button>
+  </div>
+
+  <!-- 主内容 -->
+  <div class="content">
+    <div class="chart-container"><div id="chart"></div></div>
+
+    <details class="full-rank" id="fullRank">
+      <summary>📋 完整榜单明细（共 <span id="fullRankCount">0</span> 个板块）</summary>
+      <button class="btn-fullscreen" id="btnFullscreen" title="全屏">⛶ 全屏</button>
+      <div class="table-wrap">
+        <table id="fullRankTable"></table>
+      </div>
+    </details>
+
+    <div class="status-bar">
+      <span>最近刷新：<b id="lastRefresh">--:--:--</b></span>
+      <span>下次刷新：<span class="countdown" id="countdown">--</span></span>
+      <span>已采集：<b id="snapCount">0</b> 轮</span>
+      <span>交易时段：<b id="isTrading">--</b></span>
+      <span id="errMsg" style="color:#ef4444"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================================================================
+// 全局状态
+// ===================================================================
+const STATE = {
+  mode: 'realtime',
+  sector: 'concept',
+  lineTopN: 10,
+  lineBotN: 10,
+  rankTopN: 10,
+  rankBotN: 10,
+  refreshSec: 180,
+  histDate: '',
+  timer: null,
+  countdownRemaining: 0,
+  countdownInterval: null,
+};
+
+const EL = {};
+['modeGroup', 'sectorGroup', 'dateGroup', 'dateSelect',
+ 'lineTopN', 'lineTopNVal', 'lineBotN', 'lineBotNVal',
+ 'rankTopN', 'rankTopNVal', 'rankBotN', 'rankBotNVal',
+ 'refreshSec', 'refreshSecVal', 'refreshGroup',
+ 'btnRefresh', 'btnFullscreen', 'lastRefresh', 'countdown', 'snapCount', 'isTrading',
+ 'errMsg', 'statusDot', 'tradingLabel', 'fullRankTable', 'fullRankCount', 'fullRank',
+].forEach(id => { EL[id] = document.getElementById(id); });
+
+// ===================================================================
+// Plotly 配置（复刻 visualize.py）
+// ===================================================================
+const PALETTE = [
+  '#E6194B', '#3CB44B', '#4363D8', '#F58231', '#911EB4',
+  '#42D4F4', '#F032E6', '#BFEF45', '#FABE4B', '#469990',
+  '#9A6324', '#800000',
+];
+const SYMBOLS = [
+  'circle', 'diamond', 'square', 'triangle-up', 'cross',
+  'x', 'triangle-down', 'star', 'hexagon', 'pentagon',
+  'hourglass', 'bowtie',
+];
+
+function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineBotN) {
+  const traces = [];
+  const names = Object.keys(intraday);
+  const total = rank.length;
+
+  // 数据为空时显示占位提示
+  if (total === 0) {
+    Plotly.react('chart', [{
+      type: 'scatter', x: [0], y: [0], mode: 'text',
+      text: ['暂无数据'], textfont: { size: 24, color: '#999' },
+      xaxis: 'x', yaxis: 'y',
+    }], {
+      height: 560, margin: { l: 50, r: 30, t: 70, b: 50 },
+      xaxis: { visible: false }, yaxis: { visible: false },
+      title: { text: '暂无数据，请等待后台采集', x: 0.5, xanchor: 'center', font: { size: 17 } },
+    }, { displaylogo: false, responsive: true });
+    return;
+  }
+
+  // 左：折线 traces — 前N条(流入) + 后N条(流出)
+  const topNames = names.filter(n => {
+    const idx = rank.findIndex(r => r.name === n);
+    return idx >= 0 && idx < lineTopN;
+  });
+  const botNames = names.filter(n => {
+    const idx = rank.findIndex(r => r.name === n);
+    return idx >= total - lineBotN;
+  });
+
+  // 流入板块折线（Tableau 色盘前段）
+  topNames.forEach((name, i) => {
+    const pts = intraday[name];
+    const final = pts.length > 0 ? pts[pts.length - 1][1] : 0;
+    const c = PALETTE[i % PALETTE.length];
+    const sym = SYMBOLS[i % SYMBOLS.length];
+    traces.push({
+      x: pts.map(p => p[0]), y: pts.map(p => p[1]),
+      type: 'scatter', mode: 'lines+markers',
+      name: `↑ ${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
+      line: { color: c, width: 3 },
+      marker: { size: 6, color: c, symbol: sym, line: { width: 1.5, color: 'white' } },
+      hovertemplate: `<b>${name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>`,
+      xaxis: 'x', yaxis: 'y',
+    });
+  });
+
+  // 流出板块折线（色盘后段 + 虚线标记）
+  const colorOffset = topNames.length;
+  botNames.forEach((name, i) => {
+    const pts = intraday[name];
+    const final = pts.length > 0 ? pts[pts.length - 1][1] : 0;
+    const ci = (colorOffset + i) % PALETTE.length;
+    const c = PALETTE[ci];
+    const sym = SYMBOLS[ci % SYMBOLS.length];
+    traces.push({
+      x: pts.map(p => p[0]), y: pts.map(p => p[1]),
+      type: 'scatter', mode: 'lines+markers',
+      name: `↓ ${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
+      line: { color: c, width: 2.5, dash: 'dash' },
+      marker: { size: 5, color: c, symbol: sym, line: { width: 1.2, color: 'white' } },
+      hovertemplate: `<b>${name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>`,
+      xaxis: 'x', yaxis: 'y',
+    });
+  });
+
+  // 右：榜单表格 — 流入 Top N + 流出 Bottom N 两块
+  const rankTopN_use = Math.min(rankTopN, total);
+  const rankBotN_use = Math.min(rankBotN, Math.max(0, total - rankTopN_use));
+
+  // 流入段（排名 1 → rankTopN_use）
+  const topRows = [];
+  for (let i = 0; i < rankTopN_use; i++) {
+    const r = rank[i];
+    topRows.push([i + 1, r.name,
+      `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`,
+      `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}%`]);
+  }
+
+  // 流出段（排名 total → total-rankBotN_use+1，倒序：流出最多排最前）
+  const botRows = [];
+  for (let i = 0; i < rankBotN_use; i++) {
+    const r = rank[total - 1 - i];
+    botRows.push([total - i, r.name,
+      `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`,
+      `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}%`]);
+  }
+
+  // 合并：流入 + 分隔行 + 流出
+  const finalTableRows = [...topRows];
+  if (botRows.length > 0 && topRows.length > 0) {
+    finalTableRows.push(['', '───────', '', '']);  // 分隔行
+  }
+  finalTableRows.push(...botRows);
+
+  const hdrVals = ['#', '板块', '净流入', '涨跌'];
+  const cellVals = [0, 1, 2, 3].map(col => finalTableRows.map(r => r[col]));
+
+  function cellColor(val) {
+    const n = parseFloat(val);
+    if (!isNaN(n)) { if (n > 0) return '#fff0f0'; if (n < 0) return '#f0fff0'; }
+    return 'white';
+  }
+
+  const fillColors = [
+    finalTableRows.map((r, i) => (botRows.length > 0 && i === topRows.length) ? '#e5e7eb' : 'white'),
+    finalTableRows.map((r, i) => (botRows.length > 0 && i === topRows.length) ? '#e5e7eb' : 'white'),
+    finalTableRows.map(r => cellColor(r[2])),
+    finalTableRows.map(r => cellColor(r[3])),
+  ];
+
+  traces.push({
+    type: 'table',
+    domain: { x: [0.7312, 1.0], y: [0.0, 1.0] },
+    header: {
+      values: hdrVals, fill: { color: '#34495e' },
+      font: { color: 'white', size: 13 }, align: 'center', height: 32,
+    },
+    cells: {
+      values: cellVals, fill: { color: fillColors },
+      align: ['center', 'left', 'right', 'right'],
+      font: { size: 12 }, height: 28,
+    },
+  });
+
+  const layout = {
+    height: 560,
+    margin: { l: 50, r: 30, t: 70, b: 50 },
+    legend: {
+      orientation: 'v', yanchor: 'top', y: 1, xanchor: 'left', x: 1.02,
+      font: { size: 11 }, bgcolor: 'rgba(255,255,255,0.9)',
+    },
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    title: {
+      text: `<b>A 股板块资金流向</b> · 数据源：东方财富 · 更新 ${titleTS}`,
+      x: 0.5, xanchor: 'center', font: { size: 17 },
+    },
+    xaxis: {
+      domain: [0, 0.6912], title: { text: '时间' },
+      showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 15,
+    },
+    yaxis: {
+      title: { text: '主力净流入（亿元）' },
+      showgrid: true, gridcolor: '#e8e8e8',
+      zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5,
+    },
+    annotations: [
+      { text: `日内板块主力资金流向（${titleTS}）`, x: 0.3456, xanchor: 'center', y: 1.0, yanchor: 'bottom', xref: 'paper', yref: 'paper', font: { size: 16 }, showarrow: false },
+      { text: '板块资金榜', x: 0.8656, xanchor: 'center', y: 1.0, yanchor: 'bottom', xref: 'paper', yref: 'paper', font: { size: 16 }, showarrow: false },
+    ],
+  };
+
+  const config = {
+    locale: 'zh-CN', displaylogo: false, responsive: true,
+    toImageButtonOptions: { filename: '资金流向', format: 'png' },
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+  };
+
+  Plotly.react('chart', traces, layout, config);
+}
+
+// ===================================================================
+// API 调用
+// ===================================================================
+async function fetchDashboard() {
+  const params = new URLSearchParams({
+    sector: STATE.sector,
+    line_top_n: STATE.lineTopN,
+    line_bottom_n: STATE.lineBotN,
+    rank_top_n: STATE.rankTopN,
+    rank_bottom_n: STATE.rankBotN,
+  });
+  if (STATE.mode === 'history' && STATE.histDate) {
+    params.set('date', STATE.histDate);
+  }
+  const resp = await fetch(`/api/dashboard?${params}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function fetchDates() {
+  const resp = await fetch('/api/dates');
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  return data.dates || [];
+}
+
+// ===================================================================
+// 渲染
+// ===================================================================
+async function render() {
+  try {
+    const data = await fetchDashboard();
+    const now = new Date();
+    EL.lastRefresh.textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
+    EL.snapCount.textContent = data.snapshot_count;
+    EL.isTrading.textContent = data.is_trading ? '✅ 是' : '❌ 已闭市';
+    EL.errMsg.textContent = data.error || '';
+
+    // 状态指示点
+    const dot = EL.statusDot;
+    dot.className = 'status-dot ' + (data.error ? 'offline' : (data.is_trading ? 'online' : 'idle'));
+    EL.tradingLabel.textContent = data.is_trading ? '交易中' : '已闭市';
+
+    if (data.rank.length === 0 && !data.error) {
+      EL.errMsg.textContent = '暂无数据';
+    }
+
+    // 图表标题中的日期
+    const titleTS = STATE.mode === 'history' && STATE.histDate
+      ? `${STATE.histDate}（历史回看）`
+      : `${data.ts}（${STATE.sector === 'concept' ? '概念板块' : '行业板块'}）`;
+
+    buildChart(data.rank, data.intraday, titleTS, STATE.rankTopN, STATE.rankBotN, STATE.lineTopN, STATE.lineBotN);
+
+    // 完整榜单表格
+    renderFullRank(data.rank, STATE.rankTopN, STATE.rankBotN);
+
+    // 重置倒计时
+    STATE.countdownRemaining = STATE.refreshSec;
+  } catch (e) {
+    EL.errMsg.textContent = `请求失败: ${e.message}`;
+    EL.statusDot.className = 'status-dot offline';
+  }
+}
+
+function renderFullRank(rank, rankTopN, rankBotN) {
+  const table = EL.fullRankTable;
+  const total = rank.length;
+  EL.fullRankCount.textContent = total;
+  const topN = Math.min(rankTopN, total);
+  const botN = Math.min(rankBotN, Math.max(0, total - topN));
+
+  function rowHtml(r, rankNum) {
+    const inf = `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`;
+    const chg = `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}%`;
+    const infCls = r.inflow > 0 ? 'pos' : (r.inflow < 0 ? 'neg' : '');
+    const chgCls = r.change_pct > 0 ? 'pos' : (r.change_pct < 0 ? 'neg' : '');
+    return `<tr><td>${rankNum}</td><td>${r.name}</td><td class="${infCls}">${inf}</td><td class="${chgCls}">${chg}</td></tr>`;
+  }
+
+  let html = '';
+
+  // 流入 Top N（高亮标记）
+  html += `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📈 资金流入 Top ${topN}</th></tr>`;
+  html += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
+  for (let i = 0; i < topN; i++) {
+    html += rowHtml(rank[i], i + 1);
+  }
+
+  // 中间段（如果 total > topN + botN）
+  const middleStart = topN;
+  const middleEnd = total - botN;
+  if (middleEnd > middleStart) {
+    html += `<tr style="background:#e5e7eb;color:#6b7280;"><th colspan="4" style="text-align:center;padding:6px;">··· 中间 ${middleEnd - middleStart} 个板块（已折叠，拖动滑块可展开）···</th></tr>`;
+  }
+
+  // 流出 Bottom N（倒序：流出最多排最前）
+  if (botN > 0) {
+    html += '<tr><td colspan="4" style="height:8px;"></td></tr>';
+    html += `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📉 资金流出 Bottom ${botN}</th></tr>`;
+    html += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
+    for (let i = 0; i < botN; i++) {
+      const r = rank[total - 1 - i];
+      html += rowHtml(r, total - i);
+    }
+  }
+
+  table.innerHTML = html;
+}
+
+// ===================================================================
+// 倒计时
+// ===================================================================
+function updateCountdown() {
+  if (STATE.mode !== 'realtime') {
+    EL.countdown.textContent = '--';
+    EL.refreshGroup.style.opacity = '0.5';
+    return;
+  }
+  EL.refreshGroup.style.opacity = '1';
+  STATE.countdownRemaining--;
+  if (STATE.countdownRemaining <= 0) {
+    STATE.countdownRemaining = STATE.refreshSec;
+    render();
+  }
+  const m = Math.floor(STATE.countdownRemaining / 60);
+  const s = STATE.countdownRemaining % 60;
+  EL.countdown.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function resetTimer() {
+  if (STATE.timer) clearInterval(STATE.timer);
+  if (STATE.countdownInterval) clearInterval(STATE.countdownInterval);
+  STATE.countdownRemaining = STATE.refreshSec;
+
+  if (STATE.mode === 'realtime') {
+    STATE.timer = setInterval(() => {
+      render();
+      STATE.countdownRemaining = STATE.refreshSec;
+    }, STATE.refreshSec * 1000);
+    STATE.countdownInterval = setInterval(updateCountdown, 1000);
+  }
+}
+
+// ===================================================================
+// 事件绑定
+// ===================================================================
+EL.modeGroup.addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  EL.modeGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  STATE.mode = e.target.dataset.mode;
+  EL.dateGroup.style.display = STATE.mode === 'history' ? 'flex' : 'none';
+  EL.refreshGroup.style.display = STATE.mode === 'history' ? 'none' : 'flex';
+  resetTimer();
+  if (STATE.mode === 'history') {
+    loadDates().then(() => render());
+  } else {
+    render();
+  }
+});
+
+EL.sectorGroup.addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  EL.sectorGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  STATE.sector = e.target.dataset.sector;
+  render();
+});
+
+EL.lineTopN.addEventListener('input', () => {
+  STATE.lineTopN = +EL.lineTopN.value;
+  EL.lineTopNVal.textContent = STATE.lineTopN;
+  render();
+});
+EL.lineBotN.addEventListener('input', () => {
+  STATE.lineBotN = +EL.lineBotN.value;
+  EL.lineBotNVal.textContent = STATE.lineBotN;
+  render();
+});
+EL.rankTopN.addEventListener('input', () => {
+  STATE.rankTopN = +EL.rankTopN.value;
+  EL.rankTopNVal.textContent = STATE.rankTopN;
+  render();
+});
+EL.rankBotN.addEventListener('input', () => {
+  STATE.rankBotN = +EL.rankBotN.value;
+  EL.rankBotNVal.textContent = STATE.rankBotN;
+  render();
+});
+
+EL.refreshSec.addEventListener('input', () => {
+  STATE.refreshSec = +EL.refreshSec.value;
+  EL.refreshSecVal.textContent = STATE.refreshSec;
+  resetTimer();
+});
+
+EL.dateSelect.addEventListener('change', () => {
+  STATE.histDate = EL.dateSelect.value;
+  render();
+});
+
+EL.btnRefresh.addEventListener('click', () => {
+  STATE.countdownRemaining = STATE.refreshSec;
+  render();
+});
+
+EL.btnFullscreen.addEventListener('click', (e) => {
+  e.stopPropagation();
+  EL.fullRank.classList.toggle('fullscreen');
+  EL.btnFullscreen.textContent = EL.fullRank.classList.contains('fullscreen') ? '⛶ 退出全屏' : '⛶ 全屏';
+});
+
+// ===================================================================
+// 初始化
+// ===================================================================
+async function loadDates() {
+  const dates = await fetchDates();
+  EL.dateSelect.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+  if (dates.length > 0) STATE.histDate = dates[0];
+}
+
+async function init() {
+  await loadDates();
+  resetTimer();
+  render();
+}
+
+init();
+</script>
+
+</body>
+</html>
