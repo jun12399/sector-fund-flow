@@ -297,6 +297,11 @@ function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineB
     return idx >= total - lineBotN;
   });
 
+  // ── 共享横轴：收集所有时间点，排序后用于两图 ──
+  const allTimes = new Set();
+  names.forEach(n => { intraday[n].forEach(p => allTimes.add(p[0])); });
+  const sharedTimes = [...allTimes].sort();  // 字符串排序 = 时间顺序
+
   // ── 上图：流入板块 ──────────────────────────────────────────
   const topTraces = [];
   topNames.forEach((name, i) => {
@@ -314,20 +319,21 @@ function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineB
     });
   });
 
-  const topLayout = {
-    height: 280,
-    margin: { l: 50, r: 20, t: 35, b: 30 },
-    showlegend: true,
-    legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
-    plot_bgcolor: 'white', paper_bgcolor: 'white',
-    title: { text: '📈 资金流入', x: 0.5, xanchor: 'center', font: { size: 14 } },
-    xaxis: { showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 12 },
-    yaxis: { title: { text: '亿元' }, showgrid: true, gridcolor: '#e8e8e8', zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5 },
+  const sharedXAxis = {
+    showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 12,
+    categoryorder: 'array', categoryarray: sharedTimes,
   };
 
-  Plotly.react('chartTop', topTraces, topLayout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
+  Plotly.react('chartTop', topTraces, {
+    height: 280, margin: { l: 50, r: 20, t: 35, b: 30 },
+    showlegend: true, legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    title: { text: '📈 资金流入', x: 0.5, xanchor: 'center', font: { size: 14 } },
+    xaxis: sharedXAxis,
+    yaxis: { title: { text: '亿元' }, showgrid: true, gridcolor: '#e8e8e8', zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5 },
+  }, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
 
-  // ── 下图：流出板块 ──────────────────────────────────────────
+  // ── 下图：流出板块（横轴与上图完全一致）──────────────────────
   const botTraces = [];
   const colorOffset = topNames.length;
   botNames.forEach((name, i) => {
@@ -346,28 +352,14 @@ function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineB
     });
   });
 
-  // 下图的横轴范围与上图一致
-  let xRange = null;
-  try {
-    const topGd = document.getElementById('chartTop');
-    if (topGd && topGd._fullLayout && topGd._fullLayout.xaxis) {
-      xRange = topGd._fullLayout.xaxis.range;
-    }
-  } catch(e) {}
-
-  const botLayout = {
-    height: 280,
-    margin: { l: 50, r: 20, t: 35, b: 30 },
-    showlegend: true,
-    legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
+  Plotly.react('chartBot', botTraces, {
+    height: 280, margin: { l: 50, r: 20, t: 35, b: 30 },
+    showlegend: true, legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
     plot_bgcolor: 'white', paper_bgcolor: 'white',
     title: { text: '📉 资金流出', x: 0.5, xanchor: 'center', font: { size: 14 } },
-    xaxis: { showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 12,
-      ...(xRange ? { range: xRange } : {}) },
+    xaxis: sharedXAxis,
     yaxis: { title: { text: '亿元' }, showgrid: true, gridcolor: '#e8e8e8', zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5 },
-  };
-
-  Plotly.react('chartBot', botTraces, botLayout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
+  }, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
 
 }
 
