@@ -247,6 +247,7 @@ const STATE = {
   rankBotN: 10,
   refreshSec: 180,
   histDate: '',
+  isTrading: true,
   timer: null,
   countdownRemaining: 0,
   countdownInterval: null,
@@ -398,6 +399,7 @@ async function render() {
     const now = new Date();
     EL.lastRefresh.textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
     EL.snapCount.textContent = data.snapshot_count;
+    STATE.isTrading = data.is_trading;
     EL.isTrading.textContent = data.is_trading ? '✅ 是' : '❌ 已闭市';
     EL.errMsg.textContent = data.error || '';
 
@@ -484,11 +486,16 @@ function updateCountdown() {
     EL.refreshGroup.style.opacity = '0.5';
     return;
   }
+  // 闭市后不再刷新
+  if (!STATE.isTrading && STATE.countdownRemaining <= 0) {
+    EL.countdown.textContent = '已闭市';
+    return;
+  }
   EL.refreshGroup.style.opacity = '1';
   STATE.countdownRemaining--;
   if (STATE.countdownRemaining <= 0) {
     STATE.countdownRemaining = STATE.refreshSec;
-    render();
+    if (STATE.isTrading) render();
   }
   const m = Math.floor(STATE.countdownRemaining / 60);
   const s = STATE.countdownRemaining % 60;

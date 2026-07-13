@@ -18,6 +18,8 @@ from typing import Optional
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
 
+import pandas as pd
+
 from fund_flow_fetcher import (
     _cleanup_old_files,
     _load_history,
@@ -84,12 +86,15 @@ def api_dashboard(
     intraday: dict[str, list[list]] = {}
 
     if date is None:
-        # ── 实时模式：拉取全量板块（fetch_sector_rank 自动分页）──
-        df_rank = fetch_sector_rank(sector_type=sector, top_n=600)
-        if df_rank.empty:
-            error = get_last_error() or "API 无响应，请等待后台采集"
+        # ── 实时模式 ──
+        trading = is_trading_time()
+        df_rank = pd.DataFrame()
 
-            # 降级：从累加器构建简易排行
+        # 交易时段从 API 拉（有分页），闭市后用累加器（快且已完整）
+        df_rank = fetch_sector_rank(sector_type=sector, top_n=600) if trading else pd.DataFrame()
+
+        if df_rank.empty:
+            # 从累加器构建排行（闭市后直接走这里）
             from fund_flow_fetcher import _ts_accumulator, _ts_lock
             prefix = "c" if sector == "concept" else "i"
             latest: dict[str, float] = {}
@@ -97,13 +102,15 @@ def api_dashboard(
                 for key, pts in _ts_accumulator.items():
                     if key.startswith(f"{prefix}:") and pts:
                         latest[key[2:]] = pts[-1][1]
-            sorted_names = sorted(latest, key=latest.get, reverse=True)[:fetch_size]
+            sorted_names = sorted(latest, key=latest.get, reverse=True)
             for name in sorted_names:
                 rank.append({
                     "name": name, "code": "",
                     "inflow": round(latest[name], 2),
                     "change_pct": 0,
                 })
+            if not rank:
+                error = get_last_error() or "暂无数据，请等待后台采集"
         else:
             names_seen = set()
             for _, row in df_rank.iterrows():
