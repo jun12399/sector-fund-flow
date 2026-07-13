@@ -369,12 +369,20 @@ class BackgroundCollector:
                     continue
 
                 for stype in ("concept", "industry"):
-                    # 用 fetch_sector_rank 拉取，自动预热 UI 缓存
-                    df = fetch_sector_rank(sector_type=stype, top_n=self.top_n, fetcher=self._fetcher)
-                    if df.empty:
-                        continue
-                    with _ts_lock:
-                        self._record(df, stype)
+                    # 拉取流入前 N（折线图流入板块）
+                    df_top = _fetch_sector_rank_eastmoney(
+                        self._fetcher, stype, self.top_n, page=1, reverse=False)
+                    if not df_top.empty:
+                        with _ts_lock:
+                            self._record(df_top, stype)
+                    time.sleep(random.uniform(0.5, 1.0))
+
+                    # 拉取流出后 N（折线图流出板块，升序=流出最多在前）
+                    df_bot = _fetch_sector_rank_eastmoney(
+                        self._fetcher, stype, self.top_n, page=1, reverse=True)
+                    if not df_bot.empty:
+                        with _ts_lock:
+                            self._record(df_bot, stype)
                     time.sleep(random.uniform(1.0, 2.0))
 
                 _last_error = ""
@@ -514,14 +522,16 @@ def _fetch_sector_rank_eastmoney(
     sector_type: Literal["concept", "industry"] = "concept",
     top_n: int = 20,
     page: int = 1,
+    reverse: bool = False,
 ) -> pd.DataFrame:
+    """reverse=True 时按流入升序排列，用于取流出最多的板块"""
     # m:90+s:4 = 申万二级行业(128个) ← 网站实际数据源
     # m:90+t:3 = 概念板块(495个)
     fs = "m:90+t:3" if sector_type == "concept" else "m:90+s:4"
     url = "https://push2.eastmoney.com/api/qt/clist/get"
 
     params = {
-        "pn": page, "pz": top_n, "po": 1, "np": 1,
+        "pn": page, "pz": top_n, "po": 0 if reverse else 1, "np": 1,
         "fltt": 2, "invt": 2, "fs": fs, "stat": 1,
         "fields": "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87",
         "fid": "f62",
@@ -595,7 +605,24 @@ def fetch_sector_rank(
             return df_cached.copy()
 
     f = fetcher or _default_fetcher
-    df = _fetch_sector_rank_eastmoney(f, sector_type, top_n)
+
+    # 自动分页：API 单页最多返回约100条，超过则翻页拉取
+    _PAGE_CAP = 100
+    if top_n <= _PAGE_CAP:
+        df = _fetch_sector_rank_eastmoney(f, sector_type, top_n)
+    else:
+        frames = []
+        for pg in range(1, 99):
+            pg_df = _fetch_sector_rank_eastmoney(f, sector_type, _PAGE_CAP, page=pg)
+            if pg_df.empty:
+                break
+            frames.append(pg_df)
+            if len(pg_df) < _PAGE_CAP or sum(len(x) for x in frames) >= top_n:
+                break
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        if not df.empty:
+            df = df.drop_duplicates(subset=["板块名称"])
+
     if df.empty and fallback:
         f._log("↩️ 东财失败，尝试同花顺兜底")
         df = _fetch_sector_rank_ths(f, sector_type, top_n)

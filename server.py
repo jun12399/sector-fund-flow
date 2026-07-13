@@ -18,13 +18,11 @@ from typing import Optional
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
 
-import pandas as pd
-
 from fund_flow_fetcher import (
     _cleanup_old_files,
     _load_history,
     BackgroundCollector,
-    SmartFetcher,
+    fetch_sector_rank,
     get_available_dates,
     get_intraday_series,
     get_last_error,
@@ -48,9 +46,9 @@ async def lifespan(app):
     print("[server] 启动后台数据采集器...")
     _load_history()
     _cleanup_old_files()
-    _collector = BackgroundCollector(interval_sec=180, top_n=150)
+    _collector = BackgroundCollector(interval_sec=180, top_n=30)
     _collector.start()
-    print("[server] 后台采集器已启动 (interval=180s, top_n=150)")
+    print("[server] 后台采集器已启动 (interval=180s, top_n=30)")
     yield
     print("[server] 停止后台采集器...")
     if _collector:
@@ -59,33 +57,6 @@ async def lifespan(app):
 
 
 app = FastAPI(title="A股板块资金流向", lifespan=lifespan)
-
-
-# ── 分页拉取全部板块 ──────────────────────────────────────────────
-
-_PAGE_SIZE = 100  # 东财 API 单页上限
-
-def _fetch_all_rank(sector_type: str, max_total: int = 600) -> pd.DataFrame:
-    """分页拉取全部板块，直到没数据或达到上限"""
-    from fund_flow_fetcher import _fetch_sector_rank_eastmoney
-
-    fetcher = SmartFetcher(verbose=False, min_interval=0.3, max_interval=0.8)
-    all_frames = []
-    for page in range(1, 99):
-        df = _fetch_sector_rank_eastmoney(fetcher, sector_type, _PAGE_SIZE, page=page)
-        if df.empty:
-            break
-        all_frames.append(df)
-        if len(df) < _PAGE_SIZE:
-            break
-        if len(all_frames) * _PAGE_SIZE >= max_total:
-            break
-
-    if not all_frames:
-        return pd.DataFrame()
-    result = pd.concat(all_frames, ignore_index=True)
-    result = result.drop_duplicates(subset=["板块名称"])
-    return result
 
 
 # ── API ──────────────────────────────────────────────────────────
@@ -113,8 +84,8 @@ def api_dashboard(
     intraday: dict[str, list[list]] = {}
 
     if date is None:
-        # ── 实时模式：分页拉取全量板块 ──
-        df_rank = _fetch_all_rank(sector)
+        # ── 实时模式：拉取全量板块（fetch_sector_rank 自动分页）──
+        df_rank = fetch_sector_rank(sector_type=sector, top_n=600)
         if df_rank.empty:
             error = get_last_error() or "API 无响应，请等待后台采集"
 
@@ -147,11 +118,12 @@ def api_dashboard(
                     "change_pct": round(float(row.get("涨跌幅%", 0)), 2),
                 })
 
-        # 折线时序数据：前 N + 后 N（去重防止重叠）
-        line_names = list(dict.fromkeys(
-            [r["name"] for r in rank[:line_top_n]] +
-            ([r["name"] for r in rank[-line_bottom_n:]] if line_bottom_n > 0 else [])
-        ))
+        # 折线时序数据：前 N + 后 N
+        line_names = [r["name"] for r in rank[:line_top_n]]
+        if line_bottom_n > 0:
+            for r in rank[-line_bottom_n:]:
+                line_names.append(r["name"])
+        line_names = list(dict.fromkeys(line_names))
         for name in line_names:
             df = get_intraday_series(name, sector)
             if not df.empty:
@@ -168,7 +140,7 @@ def api_dashboard(
             for name, df in all_data.items():
                 if not df.empty:
                     latest_vals[name] = float(df["主力净流入"].iloc[-1])
-            sorted_names = sorted(latest_vals, key=latest_vals.get, reverse=True)[:fetch_size]
+            sorted_names = sorted(latest_vals, key=latest_vals.get, reverse=True)
 
             for name in sorted_names:
                 rank.append({
@@ -177,11 +149,12 @@ def api_dashboard(
                     "change_pct": 0,
                 })
 
-            # 折线时序：前 N + 后 N（去重防止重叠）
-            line_names = list(dict.fromkeys(
-                sorted_names[:line_top_n] +
-                (sorted_names[-line_bottom_n:] if line_bottom_n > 0 else [])
-            ))
+            # 折线时序：前 N + 后 N
+            line_names = [name for name in sorted_names[:line_top_n]]
+            if line_bottom_n > 0:
+                for name in sorted_names[-line_bottom_n:]:
+                    line_names.append(name)
+            line_names = list(dict.fromkeys(line_names))
             for name in line_names:
                 df = all_data[name]
                 if not df.empty:

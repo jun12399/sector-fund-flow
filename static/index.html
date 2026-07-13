@@ -79,8 +79,11 @@
   .sidebar .hint { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
 
   /* ── 图表区域 ── */
-  .chart-container { flex: 1; min-height: 0; }
-  #chart { width: 100%; height: 100%; }
+  .chart-container { flex: 1; min-height: 0; display: flex; gap: 8px; }
+  .chart-left { flex: 0.72; display: flex; flex-direction: column; min-width: 0; }
+  .chart-right { flex: 0.28; min-width: 220px; display: flex; flex-direction: column; }
+  #chartTop { flex: 1; min-height: 200px; }
+  #chartBot { flex: 1; min-height: 200px; }
 
   /* ── 底部状态栏 ── */
   .status-bar {
@@ -110,6 +113,14 @@
   .full-rank[open] .btn-fullscreen { display: inline-block; }
   .full-rank.fullscreen .btn-fullscreen { position: fixed; right: 28px; top: 28px; }
   .full-rank.fullscreen summary { font-size: 1.1rem; }
+
+  /* ── 右侧榜单 ── */
+  .chart-right table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  .chart-right th { background: #34495e; color: #fff; padding: 4px 6px; text-align: center; position: sticky; top: 0; z-index: 1; }
+  .chart-right td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--border); }
+  .chart-right td:nth-child(1), .chart-right td:nth-child(2) { text-align: center; }
+  .chart-right td.pos { background: var(--red-bg); }
+  .chart-right td.neg { background: var(--green-bg); }
 
   /* ── 响应式 ── */
   @media (max-width: 768px) {
@@ -194,10 +205,19 @@
 
   <!-- 主内容 -->
   <div class="content">
-    <div class="chart-container"><div id="chart"></div></div>
-
+    <div class="chart-container">
+      <div class="chart-left">
+        <div id="chartTop"></div>
+        <div id="chartBot"></div>
+      </div>
+      <div class="chart-right">
+        <div class="table-wrap" style="flex:1; overflow-y:auto;">
+          <table id="rankRightTable"></table>
+        </div>
+      </div>
+    </div>
     <details class="full-rank" id="fullRank">
-      <summary>📋 完整榜单明细（共 <span id="fullRankCount">0</span> 个板块）</summary>
+      <summary>📋 完整榜单明细（共 <span id="fullRankCount">0</span> 个板块，点击展开）</summary>
       <button class="btn-fullscreen" id="btnFullscreen" title="全屏">⛶ 全屏</button>
       <div class="table-wrap">
         <table id="fullRankTable"></table>
@@ -238,7 +258,8 @@ const EL = {};
  'rankTopN', 'rankTopNVal', 'rankBotN', 'rankBotNVal',
  'refreshSec', 'refreshSecVal', 'refreshGroup',
  'btnRefresh', 'btnFullscreen', 'lastRefresh', 'countdown', 'snapCount', 'isTrading',
- 'errMsg', 'statusDot', 'tradingLabel', 'fullRankTable', 'fullRankCount', 'fullRank',
+ 'errMsg', 'statusDot', 'tradingLabel',
+ 'fullRankTable', 'fullRankCount', 'fullRank', 'rankRightTable',
 ].forEach(id => { EL[id] = document.getElementById(id); });
 
 // ===================================================================
@@ -256,25 +277,17 @@ const SYMBOLS = [
 ];
 
 function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineBotN) {
-  const traces = [];
   const names = Object.keys(intraday);
   const total = rank.length;
 
-  // 数据为空时显示占位提示
   if (total === 0) {
-    Plotly.react('chart', [{
-      type: 'scatter', x: [0], y: [0], mode: 'text',
-      text: ['暂无数据'], textfont: { size: 24, color: '#999' },
-      xaxis: 'x', yaxis: 'y',
-    }], {
-      height: 560, margin: { l: 50, r: 30, t: 70, b: 50 },
-      xaxis: { visible: false }, yaxis: { visible: false },
-      title: { text: '暂无数据，请等待后台采集', x: 0.5, xanchor: 'center', font: { size: 17 } },
-    }, { displaylogo: false, responsive: true });
+    const empty = [{ type: 'scatter', x: [0], y: [0], mode: 'text', text: ['暂无数据'], textfont: { size: 20, color: '#999' } }];
+    const emptyLayout = { height: 200, margin: { l: 40, r: 20, t: 30, b: 30 }, xaxis: { visible: false }, yaxis: { visible: false } };
+    Plotly.react('chartTop', empty, emptyLayout, { displaylogo: false, responsive: true });
+    Plotly.react('chartBot', [], { height: 200, title: '暂无数据' }, { displaylogo: false, responsive: true });
     return;
   }
 
-  // 左：折线 traces — 前N条(流入) + 后N条(流出)
   const topNames = names.filter(n => {
     const idx = rank.findIndex(r => r.name === n);
     return idx >= 0 && idx < lineTopN;
@@ -284,24 +297,38 @@ function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineB
     return idx >= total - lineBotN;
   });
 
-  // 流入板块折线（Tableau 色盘前段）
+  // ── 上图：流入板块 ──────────────────────────────────────────
+  const topTraces = [];
   topNames.forEach((name, i) => {
     const pts = intraday[name];
     const final = pts.length > 0 ? pts[pts.length - 1][1] : 0;
     const c = PALETTE[i % PALETTE.length];
     const sym = SYMBOLS[i % SYMBOLS.length];
-    traces.push({
+    topTraces.push({
       x: pts.map(p => p[0]), y: pts.map(p => p[1]),
       type: 'scatter', mode: 'lines+markers',
-      name: `↑ ${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
+      name: `${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
       line: { color: c, width: 3 },
       marker: { size: 6, color: c, symbol: sym, line: { width: 1.5, color: 'white' } },
       hovertemplate: `<b>${name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>`,
-      xaxis: 'x', yaxis: 'y',
     });
   });
 
-  // 流出板块折线（色盘后段 + 虚线标记）
+  const topLayout = {
+    height: 280,
+    margin: { l: 50, r: 20, t: 35, b: 30 },
+    showlegend: true,
+    legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    title: { text: '📈 资金流入', x: 0.5, xanchor: 'center', font: { size: 14 } },
+    xaxis: { showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 12 },
+    yaxis: { title: { text: '亿元' }, showgrid: true, gridcolor: '#e8e8e8', zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5 },
+  };
+
+  Plotly.react('chartTop', topTraces, topLayout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
+
+  // ── 下图：流出板块 ──────────────────────────────────────────
+  const botTraces = [];
   const colorOffset = topNames.length;
   botNames.forEach((name, i) => {
     const pts = intraday[name];
@@ -309,110 +336,39 @@ function buildChart(rank, intraday, titleTS, rankTopN, rankBotN, lineTopN, lineB
     const ci = (colorOffset + i) % PALETTE.length;
     const c = PALETTE[ci];
     const sym = SYMBOLS[ci % SYMBOLS.length];
-    traces.push({
+    botTraces.push({
       x: pts.map(p => p[0]), y: pts.map(p => p[1]),
       type: 'scatter', mode: 'lines+markers',
-      name: `↓ ${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
+      name: `${name}  ${final >= 0 ? '+' : ''}${final.toFixed(2)}亿`,
       line: { color: c, width: 2.5, dash: 'dash' },
       marker: { size: 5, color: c, symbol: sym, line: { width: 1.2, color: 'white' } },
       hovertemplate: `<b>${name}</b><br>%{x}  净流入: %{y:.2f}亿<extra></extra>`,
-      xaxis: 'x', yaxis: 'y',
     });
   });
 
-  // 右：榜单表格 — 流入 Top N + 流出 Bottom N 两块
-  const rankTopN_use = Math.min(rankTopN, total);
-  const rankBotN_use = Math.min(rankBotN, Math.max(0, total - rankTopN_use));
+  // 下图的横轴范围与上图一致
+  let xRange = null;
+  try {
+    const topGd = document.getElementById('chartTop');
+    if (topGd && topGd._fullLayout && topGd._fullLayout.xaxis) {
+      xRange = topGd._fullLayout.xaxis.range;
+    }
+  } catch(e) {}
 
-  // 流入段（排名 1 → rankTopN_use）
-  const topRows = [];
-  for (let i = 0; i < rankTopN_use; i++) {
-    const r = rank[i];
-    topRows.push([i + 1, r.name,
-      `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`,
-      `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}%`]);
-  }
-
-  // 流出段（排名 total → total-rankBotN_use+1，倒序：流出最多排最前）
-  const botRows = [];
-  for (let i = 0; i < rankBotN_use; i++) {
-    const r = rank[total - 1 - i];
-    botRows.push([total - i, r.name,
-      `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`,
-      `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}%`]);
-  }
-
-  // 合并：流入 + 分隔行 + 流出
-  const finalTableRows = [...topRows];
-  if (botRows.length > 0 && topRows.length > 0) {
-    finalTableRows.push(['', '───────', '', '']);  // 分隔行
-  }
-  finalTableRows.push(...botRows);
-
-  const hdrVals = ['#', '板块', '净流入', '涨跌'];
-  const cellVals = [0, 1, 2, 3].map(col => finalTableRows.map(r => r[col]));
-
-  function cellColor(val) {
-    const n = parseFloat(val);
-    if (!isNaN(n)) { if (n > 0) return '#fff0f0'; if (n < 0) return '#f0fff0'; }
-    return 'white';
-  }
-
-  const fillColors = [
-    finalTableRows.map((r, i) => (botRows.length > 0 && i === topRows.length) ? '#e5e7eb' : 'white'),
-    finalTableRows.map((r, i) => (botRows.length > 0 && i === topRows.length) ? '#e5e7eb' : 'white'),
-    finalTableRows.map(r => cellColor(r[2])),
-    finalTableRows.map(r => cellColor(r[3])),
-  ];
-
-  traces.push({
-    type: 'table',
-    domain: { x: [0.7312, 1.0], y: [0.0, 1.0] },
-    header: {
-      values: hdrVals, fill: { color: '#34495e' },
-      font: { color: 'white', size: 13 }, align: 'center', height: 32,
-    },
-    cells: {
-      values: cellVals, fill: { color: fillColors },
-      align: ['center', 'left', 'right', 'right'],
-      font: { size: 12 }, height: 28,
-    },
-  });
-
-  const layout = {
-    height: 560,
-    margin: { l: 50, r: 30, t: 70, b: 50 },
-    legend: {
-      orientation: 'v', yanchor: 'top', y: 1, xanchor: 'left', x: 1.02,
-      font: { size: 11 }, bgcolor: 'rgba(255,255,255,0.9)',
-    },
+  const botLayout = {
+    height: 280,
+    margin: { l: 50, r: 20, t: 35, b: 30 },
+    showlegend: true,
+    legend: { orientation: 'h', y: 1.15, font: { size: 10 } },
     plot_bgcolor: 'white', paper_bgcolor: 'white',
-    title: {
-      text: `<b>A 股板块资金流向</b> · 数据源：东方财富 · 更新 ${titleTS}`,
-      x: 0.5, xanchor: 'center', font: { size: 17 },
-    },
-    xaxis: {
-      domain: [0, 0.6912], title: { text: '时间' },
-      showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 15,
-    },
-    yaxis: {
-      title: { text: '主力净流入（亿元）' },
-      showgrid: true, gridcolor: '#e8e8e8',
-      zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5,
-    },
-    annotations: [
-      { text: `日内板块主力资金流向（${titleTS}）`, x: 0.3456, xanchor: 'center', y: 1.0, yanchor: 'bottom', xref: 'paper', yref: 'paper', font: { size: 16 }, showarrow: false },
-      { text: '板块资金榜', x: 0.8656, xanchor: 'center', y: 1.0, yanchor: 'bottom', xref: 'paper', yref: 'paper', font: { size: 16 }, showarrow: false },
-    ],
+    title: { text: '📉 资金流出', x: 0.5, xanchor: 'center', font: { size: 14 } },
+    xaxis: { showgrid: true, gridcolor: '#e8e8e8', tickangle: -45, nticks: 12,
+      ...(xRange ? { range: xRange } : {}) },
+    yaxis: { title: { text: '亿元' }, showgrid: true, gridcolor: '#e8e8e8', zeroline: true, zerolinecolor: '#555', zerolinewidth: 1.5 },
   };
 
-  const config = {
-    locale: 'zh-CN', displaylogo: false, responsive: true,
-    toImageButtonOptions: { filename: '资金流向', format: 'png' },
-    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-  };
+  Plotly.react('chartBot', botTraces, botLayout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
 
-  Plotly.react('chart', traces, layout, config);
 }
 
 // ===================================================================
@@ -481,11 +437,10 @@ async function render() {
 }
 
 function renderFullRank(rank, rankTopN, rankBotN) {
-  const table = EL.fullRankTable;
   const total = rank.length;
-  EL.fullRankCount.textContent = total;
   const topN = Math.min(rankTopN, total);
   const botN = Math.min(rankBotN, Math.max(0, total - topN));
+  EL.fullRankCount.textContent = total;
 
   function rowHtml(r, rankNum) {
     const inf = `${r.inflow >= 0 ? '+' : ''}${r.inflow.toFixed(2)}亿`;
@@ -495,34 +450,37 @@ function renderFullRank(rank, rankTopN, rankBotN) {
     return `<tr><td>${rankNum}</td><td>${r.name}</td><td class="${infCls}">${inf}</td><td class="${chgCls}">${chg}</td></tr>`;
   }
 
-  let html = '';
+  // 右侧榜单（前N + 分隔 + 后N，倒序）
+  let rightHtml = '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌</th></tr>';
+  for (let i = 0; i < topN; i++) rightHtml += rowHtml(rank[i], i + 1);
+  if (botN > 0 && topN > 0) {
+    rightHtml += '<tr><td colspan="4" style="background:#e5e7eb;height:4px;"></td></tr>';
+  }
+  for (let i = 0; i < botN; i++) {
+    const r = rank[total - 1 - i];
+    rightHtml += rowHtml(r, total - i);
+  }
+  EL.rankRightTable.innerHTML = rightHtml;
 
-  // 流入 Top N（高亮标记）
-  html += `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📈 资金流入 Top ${topN}</th></tr>`;
-  html += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
-  for (let i = 0; i < topN; i++) {
-    html += rowHtml(rank[i], i + 1);
+  // 完整榜单（展开）
+  let fullHtml = `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📈 资金流入 Top ${topN}</th></tr>`;
+  fullHtml += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
+  for (let i = 0; i < topN; i++) fullHtml += rowHtml(rank[i], i + 1);
+
+  const midStart = topN, midEnd = total - botN;
+  if (midEnd > midStart) {
+    fullHtml += `<tr style="background:#e5e7eb;color:#6b7280;"><th colspan="4" style="text-align:center;padding:6px;">··· 中间 ${midEnd - midStart} 个板块（已折叠）···</th></tr>`;
   }
 
-  // 中间段（如果 total > topN + botN）
-  const middleStart = topN;
-  const middleEnd = total - botN;
-  if (middleEnd > middleStart) {
-    html += `<tr style="background:#e5e7eb;color:#6b7280;"><th colspan="4" style="text-align:center;padding:6px;">··· 中间 ${middleEnd - middleStart} 个板块（已折叠，拖动滑块可展开）···</th></tr>`;
-  }
-
-  // 流出 Bottom N（倒序：流出最多排最前）
   if (botN > 0) {
-    html += '<tr><td colspan="4" style="height:8px;"></td></tr>';
-    html += `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📉 资金流出 Bottom ${botN}</th></tr>`;
-    html += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
+    fullHtml += `<tr style="background:#34495e;color:#fff;"><th colspan="4" style="text-align:center;padding:8px;">📉 资金流出 Bottom ${botN}</th></tr>`;
+    fullHtml += '<tr><th>#</th><th>板块</th><th>净流入</th><th>涨跌幅</th></tr>';
     for (let i = 0; i < botN; i++) {
       const r = rank[total - 1 - i];
-      html += rowHtml(r, total - i);
+      fullHtml += rowHtml(r, total - i);
     }
   }
-
-  table.innerHTML = html;
+  EL.fullRankTable.innerHTML = fullHtml;
 }
 
 // ===================================================================
